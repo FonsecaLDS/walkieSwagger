@@ -3,9 +3,11 @@ openapi: 3.0.3
 info:
   title: Walkie REST API
   description: |
-    Official REST API documentation for Walkie Backend.
+    Official REST API documentation for Walker Backend.
+    All business logic lives in PostgreSQL RPCs (Supabase).
     Authentication is handled via Supabase Auth.
-  version: 1.0.0
+    Row Level Security (RLS) is enforced at the database level.
+  version: 1.1.0
 
 servers:
   - url: https://ftafbdjzritdvsibpqtp.supabase.co
@@ -15,6 +17,10 @@ tags:
     description: Authentication (Supabase)
   - name: Projects
     description: Project management
+  - name: Conversations
+    description: Conversations and memberships
+  - name: Messages
+    description: Messages and reads
 
 # ==========================
 # SECURITY DEFINITIONS
@@ -43,9 +49,6 @@ paths:
     post:
       tags: [Auth]
       summary: Login with email and password
-      description: |
-        Authenticates a user using email and password.
-        Returns an access token (JWT) used to authenticate RPC calls.
       security:
         - ApiKeyAuth: []
       parameters:
@@ -65,48 +68,19 @@ paths:
               properties:
                 email:
                   type: string
-                  example: alice@walker.dev
                 password:
                   type: string
-                  example: 123456
       responses:
         '200':
-          description: Authenticated successfully
-        '400':
-          description: Invalid credentials
-        '401':
-          description: Unauthorized
+          description: Authenticated
 
   # ==========================
-  # AUTH — GOOGLE (OAUTH)
-  # ==========================
-  /auth/v1/authorize:
-    get:
-      tags: [Auth]
-      summary: Login with Google or Apple
-      description: |
-        Redirect-based OAuth authentication.
-        Used for Google and Apple sign-in.
-      parameters:
-        - in: query
-          name: provider
-          required: true
-          schema:
-            type: string
-            enum: [google, apple]
-      responses:
-        '302':
-          description: Redirect to OAuth provider
-
-  # ==========================
-  # PROJECTS — CREATE
+  # PROJECTS
   # ==========================
   /rest/v1/rpc/rpc__project_create:
     post:
       tags: [Projects]
       summary: Create a project
-      description: |
-        Creates a new project and assigns the authenticated user as owner.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -120,35 +94,27 @@ paths:
               properties:
                 p_name:
                   type: string
-                  example: Walker Demo Project
                 p_description:
                   type: string
-                  example: Project used for testing
       responses:
         '200':
-          description: Project created successfully
+          description: Project ID
           content:
             application/json:
               schema:
                 type: string
                 format: uuid
 
-  # ==========================
-  # PROJECTS — LIST FOR USER
-  # ==========================
   /rest/v1/rpc/rpc__project_list_for_user:
     post:
       tags: [Projects]
       summary: List projects for authenticated user
-      description: |
-        Returns all projects the user belongs to, including role,
-        unread messages count and last activity.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
       responses:
         '200':
-          description: List of projects
+          description: Projects list
           content:
             application/json:
               schema:
@@ -165,22 +131,17 @@ paths:
                       type: boolean
                     role:
                       type: string
+                      example: owner
                     unread_messages_count:
                       type: integer
                     last_activity_at:
                       type: string
                       format: date-time
 
-  # ==========================
-  # PROJECTS — ARCHIVE / UNARCHIVE
-  # ==========================
   /rest/v1/rpc/rpc__project_archive:
     post:
       tags: [Projects]
-      summary: Archive or unarchive a project
-      description: |
-        Archives or unarchives a project.
-        Only project owners or admins can perform this action.
+      summary: Archive or unarchive project
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -199,17 +160,100 @@ paths:
                   type: boolean
       responses:
         '200':
-          description: Project updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  project_id:
-                    type: string
-                    format: uuid
-                  archived:
-                    type: boolean
-                  updated_at:
-                    type: string
-                    format: date-time
+          description: Updated project
+
+  # ==========================
+  # CONVERSATIONS
+  # ==========================
+  /rest/v1/conversations:
+    get:
+      tags: [Conversations]
+      summary: List conversations visible to user
+      description: |
+        Uses RLS. Returns conversations where user is a member.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Conversation list
+
+  # ==========================
+  # MESSAGES
+  # ==========================
+  /rest/v1/messages:
+    get:
+      tags: [Messages]
+      summary: List messages
+      description: |
+        Returns messages user can read.
+        Requires conversation membership (RLS).
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: conversation_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Messages list
+
+    post:
+      tags: [Messages]
+      summary: Send a message
+      description: |
+        Inserts a message into a conversation.
+        sender_id is resolved from auth.uid().
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [conversation_id, content]
+              properties:
+                conversation_id:
+                  type: string
+                  format: uuid
+                content:
+                  type: string
+      responses:
+        '201':
+          description: Message created
+
+  # ==========================
+  # READ STATUS
+  # ==========================
+  /rest/v1/conversation_reads:
+    post:
+      tags: [Messages]
+      summary: Update read state
+      description: |
+        Updates last_read_message_id for authenticated user.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [conversation_id, last_read_message_id]
+              properties:
+                conversation_id:
+                  type: string
+                  format: uuid
+                last_read_message_id:
+                  type: string
+                  format: uuid
+      responses:
+        '204':
+          description: Read state updated
