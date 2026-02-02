@@ -3,7 +3,7 @@ openapi: 3.0.3
 info:
   title: Walker REST API
   description: |
-    Official REST API documentation for Walker Backend.
+    Official REST API documentation for Walkie Backend.
     Authentication is handled via Supabase Auth.
   version: 1.0.0
 
@@ -14,7 +14,7 @@ tags:
   - name: Auth
     description: Authentication (Supabase)
   - name: Projects
-    description: Project management (Block 1)
+    description: Project management
 
 # ==========================
 # SECURITY DEFINITIONS
