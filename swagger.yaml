@@ -1,7 +1,7 @@
 openapi: 3.0.3
 
 info:
-  title: Walker REST API
+  title: Walkie REST API
   description: |
     Official REST API documentation for Walkie Backend.
     Authentication is handled via Supabase Auth.
