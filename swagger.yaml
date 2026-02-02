@@ -1,0 +1,215 @@
+openapi: 3.0.3
+
+info:
+  title: Walker REST API
+  description: |
+    Official REST API documentation for Walker Backend.
+    Authentication is handled via Supabase Auth.
+  version: 1.0.0
+
+servers:
+  - url: https://ftafbdjzritdvsibpqtp.supabase.co
+
+tags:
+  - name: Auth
+    description: Authentication (Supabase)
+  - name: Projects
+    description: Project management (Block 1)
+
+# ==========================
+# SECURITY DEFINITIONS
+# ==========================
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: apikey
+
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+# ==========================
+# PATHS
+# ==========================
+paths:
+
+  # ==========================
+  # AUTH — EMAIL / PASSWORD
+  # ==========================
+  /auth/v1/token:
+    post:
+      tags: [Auth]
+      summary: Login with email and password
+      description: |
+        Authenticates a user using email and password.
+        Returns an access token (JWT) used to authenticate RPC calls.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - in: query
+          name: grant_type
+          required: true
+          schema:
+            type: string
+            enum: [password]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  example: alice@walker.dev
+                password:
+                  type: string
+                  example: 123456
+      responses:
+        '200':
+          description: Authenticated successfully
+        '400':
+          description: Invalid credentials
+        '401':
+          description: Unauthorized
+
+  # ==========================
+  # AUTH — GOOGLE (OAUTH)
+  # ==========================
+  /auth/v1/authorize:
+    get:
+      tags: [Auth]
+      summary: Login with Google or Apple
+      description: |
+        Redirect-based OAuth authentication.
+        Used for Google and Apple sign-in.
+      parameters:
+        - in: query
+          name: provider
+          required: true
+          schema:
+            type: string
+            enum: [google, apple]
+      responses:
+        '302':
+          description: Redirect to OAuth provider
+
+  # ==========================
+  # PROJECTS — CREATE
+  # ==========================
+  /rest/v1/rpc/rpc__project_create:
+    post:
+      tags: [Projects]
+      summary: Create a project
+      description: |
+        Creates a new project and assigns the authenticated user as owner.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_name, p_description]
+              properties:
+                p_name:
+                  type: string
+                  example: Walker Demo Project
+                p_description:
+                  type: string
+                  example: Project used for testing
+      responses:
+        '200':
+          description: Project created successfully
+          content:
+            application/json:
+              schema:
+                type: string
+                format: uuid
+
+  # ==========================
+  # PROJECTS — LIST FOR USER
+  # ==========================
+  /rest/v1/rpc/rpc__project_list_for_user:
+    post:
+      tags: [Projects]
+      summary: List projects for authenticated user
+      description: |
+        Returns all projects the user belongs to, including role,
+        unread messages count and last activity.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    project_id:
+                      type: string
+                      format: uuid
+                    name:
+                      type: string
+                    archived:
+                      type: boolean
+                    role:
+                      type: string
+                    unread_messages_count:
+                      type: integer
+                    last_activity_at:
+                      type: string
+                      format: date-time
+
+  # ==========================
+  # PROJECTS — ARCHIVE / UNARCHIVE
+  # ==========================
+  /rest/v1/rpc/rpc__project_archive:
+    post:
+      tags: [Projects]
+      summary: Archive or unarchive a project
+      description: |
+        Archives or unarchives a project.
+        Only project owners or admins can perform this action.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id, p_archived]
+              properties:
+                p_project_id:
+                  type: string
+                  format: uuid
+                p_archived:
+                  type: boolean
+      responses:
+        '200':
+          description: Project updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project_id:
+                    type: string
+                    format: uuid
+                  archived:
+                    type: boolean
+                  updated_at:
+                    type: string
+                    format: date-time
