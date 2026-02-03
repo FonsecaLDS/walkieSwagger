@@ -2,28 +2,25 @@ openapi: 3.0.3
 
 info:
   title: Walkie REST API
+  version: 2.0
   description: |
-    Official REST API documentation for Walker Backend.
-    All business logic lives in PostgreSQL RPCs (Supabase).
-    Authentication is handled via Supabase Auth.
-    Row Level Security (RLS) is enforced at the database level.
-  version: 1.1.0
+    Official REST API documentation for Walkie Backend.
 
 servers:
   - url: https://ftafbdjzritdvsibpqtp.supabase.co
 
 tags:
   - name: Auth
-    description: Authentication (Supabase)
+    description: Authentication and user lifecycle (Supabase Auth)
   - name: Projects
-    description: Project management
+    description: Project domain
   - name: Conversations
     description: Conversations and memberships
   - name: Messages
-    description: Messages and reads
+    description: Messages and read state
 
 # ==========================
-# SECURITY DEFINITIONS
+# SECURITY
 # ==========================
 components:
   securitySchemes:
@@ -42,9 +39,54 @@ components:
 # ==========================
 paths:
 
-  # ==========================
-  # AUTH — EMAIL / PASSWORD
-  # ==========================
+  # =====================================================
+  # AUTH — SIGN UP
+  # =====================================================
+  /auth/v1/signup:
+    post:
+      tags: [Auth]
+      summary: Create user (Sign up)
+      description: |
+        Creates a new user via Supabase Auth.
+
+        Post-signup behavior:
+        - public.users row is created automatically via trigger
+        - User is authenticated
+        - All RLS policies apply immediately
+
+        This endpoint is NOT part of the domain layer.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  example: alice@walker.dev
+                password:
+                  type: string
+                  example: strongPassword123
+                data:
+                  type: object
+                  description: Optional metadata
+                  example:
+                    name: Alice
+      responses:
+        '200':
+          description: User created and authenticated
+        '400':
+          description: Invalid input
+        '409':
+          description: User already exists
+
+  # =====================================================
+  # AUTH — LOGIN
+  # =====================================================
   /auth/v1/token:
     post:
       tags: [Auth]
@@ -72,15 +114,19 @@ paths:
                   type: string
       responses:
         '200':
-          description: Authenticated
+          description: Authenticated successfully
+        '401':
+          description: Invalid credentials
 
-  # ==========================
-  # PROJECTS
-  # ==========================
+  # =====================================================
+  # PROJECTS — CREATE
+  # =====================================================
   /rest/v1/rpc/rpc__project_create:
     post:
       tags: [Projects]
-      summary: Create a project
+      summary: Create project
+      description: |
+        Creates a project and assigns the authenticated user as owner.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -105,10 +151,13 @@ paths:
                 type: string
                 format: uuid
 
+  # =====================================================
+  # PROJECTS — LIST
+  # =====================================================
   /rest/v1/rpc/rpc__project_list_for_user:
     post:
       tags: [Projects]
-      summary: List projects for authenticated user
+      summary: List user projects
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -131,17 +180,19 @@ paths:
                       type: boolean
                     role:
                       type: string
-                      example: owner
                     unread_messages_count:
                       type: integer
                     last_activity_at:
                       type: string
                       format: date-time
 
+  # =====================================================
+  # PROJECTS — ARCHIVE
+  # =====================================================
   /rest/v1/rpc/rpc__project_archive:
     post:
       tags: [Projects]
-      summary: Archive or unarchive project
+      summary: Archive / unarchive project
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -160,17 +211,53 @@ paths:
                   type: boolean
       responses:
         '200':
-          description: Updated project
+          description: Project updated
 
-  # ==========================
-  # CONVERSATIONS
-  # ==========================
+  # =====================================================
+  # CONVERSATIONS — CREATE (RPC 029)
+  # =====================================================
+  /rest/v1/rpc/rpc__conversation_create:
+    post:
+      tags: [Conversations]
+      summary: Create conversation
+      description: |
+        Creates a new conversation inside a project.
+        Creator becomes conversation owner automatically.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id, p_title]
+              properties:
+                p_project_id:
+                  type: string
+                  format: uuid
+                p_title:
+                  type: string
+      responses:
+        '200':
+          description: Conversation ID
+          content:
+            application/json:
+              schema:
+                type: string
+                format: uuid
+
+  # =====================================================
+  # CONVERSATIONS — LIST (RLS)
+  # =====================================================
   /rest/v1/conversations:
     get:
       tags: [Conversations]
-      summary: List conversations visible to user
+      summary: List conversations
       description: |
-        Uses RLS. Returns conversations where user is a member.
+        Returns conversations where the authenticated user is a member.
+        Uses RLS directly (no RPC).
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -178,16 +265,13 @@ paths:
         '200':
           description: Conversation list
 
-  # ==========================
-  # MESSAGES
-  # ==========================
+  # =====================================================
+  # MESSAGES — LIST
+  # =====================================================
   /rest/v1/messages:
     get:
       tags: [Messages]
       summary: List messages
-      description: |
-        Returns messages user can read.
-        Requires conversation membership (RLS).
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -204,7 +288,7 @@ paths:
 
     post:
       tags: [Messages]
-      summary: Send a message
+      summary: Send message
       description: |
         Inserts a message into a conversation.
         sender_id is resolved from auth.uid().
@@ -228,15 +312,13 @@ paths:
         '201':
           description: Message created
 
-  # ==========================
+  # =====================================================
   # READ STATUS
-  # ==========================
+  # =====================================================
   /rest/v1/conversation_reads:
     post:
       tags: [Messages]
       summary: Update read state
-      description: |
-        Updates last_read_message_id for authenticated user.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
