@@ -3,26 +3,40 @@ openapi: 3.0.3
 info:
   title: Walkie REST API
   description: |
-    Official REST API documentation for Walker Backend.
-
-    • Authentication handled via Supabase Auth
-    • Business logic implemented via PostgreSQL RPCs
-    • Row Level Security (RLS) enforced at database level
-    • Frontend never sends user_id (resolved from auth.uid())
-  version: 1.1.0
+    Official REST API documentation for Walkie Backend.
+    
+    **Architecture:**
+    - Authentication handled via Supabase Auth
+    - Business logic implemented via PostgreSQL RPCs
+    - Row Level Security (RLS) enforced at database level
+    - Frontend never sends user_id (resolved from auth.uid())
+    
+    **Current Version:** 2.0.0 (includes TODO, Messages, Follow-ups, Project Members)
+  version: 2.0.0
 
 servers:
   - url: https://ftafbdjzritdvsibpqtp.supabase.co
+    description: Production
 
 tags:
   - name: Auth
     description: Authentication & user identity (Supabase)
   - name: Projects
-    description: Project management
+    description: Project management & membership
+  - name: Project Members
+    description: Add/remove/update project members
   - name: Conversations
     description: Conversations & memberships
   - name: Messages
-    description: Messages & read state
+    description: Messages, reactions, edits & mentions
+  - name: TODO Lists
+    description: TODO list management
+  - name: TODO Items
+    description: TODO item management
+  - name: Follow-ups
+    description: Message follow-up tracking
+  - name: Direct Access
+    description: Direct table access (RLS-protected)
 
 # ==========================
 # SECURITY
@@ -33,11 +47,42 @@ components:
       type: apiKey
       in: header
       name: apikey
+      description: Supabase anon key (public)
 
     BearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: Supabase JWT token (from /auth/v1/token)
+
+  # ==========================
+  # REUSABLE SCHEMAS
+  # ==========================
+  schemas:
+    UUID:
+      type: string
+      format: uuid
+      example: "550e8400-e29b-41d4-a716-446655440000"
+
+    Timestamp:
+      type: string
+      format: date-time
+      example: "2026-02-02T14:30:00Z"
+
+    Date:
+      type: string
+      format: date
+      example: "2026-02-10"
+
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+        code:
+          type: string
+        hint:
+          type: string
 
 # ==========================
 # PATHS
@@ -45,7 +90,7 @@ components:
 paths:
 
   # ======================================================
-  # AUTH — SIGN UP (EMAIL / PASSWORD)
+  # AUTH — EMAIL / PASSWORD
   # ======================================================
   /auth/v1/token:
     post:
@@ -53,9 +98,9 @@ paths:
       summary: Login or Sign Up with email and password
       description: |
         Supabase Auth endpoint.
-
-        • grant_type=password → login
-        • grant_type=signup → create account
+        
+        - `grant_type=password` → Login
+        - `grant_type=signup` → Create account (not standard, use /signup)
       security:
         - ApiKeyAuth: []
       parameters:
@@ -64,7 +109,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [password, signup]
+            enum: [password]
       requestBody:
         required: true
         content:
@@ -75,15 +120,64 @@ paths:
               properties:
                 email:
                   type: string
+                  format: email
                   example: alice@walker.dev
                 password:
                   type: string
+                  format: password
                   example: strongpassword123
       responses:
         '200':
           description: Authenticated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+                  expires_in:
+                    type: integer
+                  token_type:
+                    type: string
+                    example: bearer
+                  user:
+                    type: object
         '400':
           description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/v1/signup:
+    post:
+      tags: [Auth]
+      summary: Sign up new user
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+      responses:
+        '200':
+          description: User created
+        '400':
+          description: Invalid input
 
   # ======================================================
   # AUTH — OAUTH (GOOGLE / APPLE)
@@ -94,10 +188,10 @@ paths:
       summary: OAuth login (Google / Apple)
       description: |
         Redirect-based OAuth flow.
-
-        Used for:
-        • Google Sign In
-        • Apple Sign In
+        
+        Supported providers:
+        - Google Sign In
+        - Apple Sign In
       parameters:
         - in: query
           name: provider
@@ -116,15 +210,16 @@ paths:
           description: Redirect to OAuth provider
 
   # ======================================================
-  # PROJECTS — CREATE
+  # PROJECTS
   # ======================================================
   /rest/v1/rpc/rpc__project_create:
     post:
       tags: [Projects]
       summary: Create project
       description: |
-        Creates a new project.
-        Authenticated user becomes owner.
+        Creates a new project. Authenticated user becomes owner.
+        
+        **Permissions:** Any authenticated user
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -138,24 +233,26 @@ paths:
               properties:
                 p_name:
                   type: string
+                  example: "Q1 2026 Launch"
                 p_description:
                   type: string
+                  example: "Planning for Q1 product launch"
       responses:
         '200':
-          description: Project ID
+          description: Project created successfully
           content:
             application/json:
               schema:
-                type: string
-                format: uuid
+                $ref: '#/components/schemas/UUID'
 
-  # ======================================================
-  # PROJECTS — LIST
-  # ======================================================
   /rest/v1/rpc/rpc__project_list_for_user:
     post:
       tags: [Projects]
       summary: List projects for authenticated user
+      description: |
+        Returns all projects where user is a member.
+        
+        **Permissions:** Authenticated user
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -170,28 +267,29 @@ paths:
                   type: object
                   properties:
                     project_id:
-                      type: string
-                      format: uuid
+                      $ref: '#/components/schemas/UUID'
                     name:
+                      type: string
+                    description:
                       type: string
                     archived:
                       type: boolean
                     role:
                       type: string
-                      example: owner
+                      enum: [owner, admin, member]
                     unread_messages_count:
                       type: integer
                     last_activity_at:
-                      type: string
-                      format: date-time
+                      $ref: '#/components/schemas/Timestamp'
 
-  # ======================================================
-  # PROJECTS — ARCHIVE
-  # ======================================================
   /rest/v1/rpc/rpc__project_archive:
     post:
       tags: [Projects]
       summary: Archive or unarchive project
+      description: |
+        Sets the archived flag on a project.
+        
+        **Permissions:** Project owner or admin
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -204,8 +302,7 @@ paths:
               required: [p_project_id, p_archived]
               properties:
                 p_project_id:
-                  type: string
-                  format: uuid
+                  $ref: '#/components/schemas/UUID'
                 p_archived:
                   type: boolean
       responses:
@@ -213,15 +310,151 @@ paths:
           description: Project updated
 
   # ======================================================
-  # CONVERSATIONS — CREATE (RPC)
+  # PROJECT MEMBERS
+  # ======================================================
+  /rest/v1/rpc/rpc__project_member_add:
+    post:
+      tags: [Project Members]
+      summary: Add member to project
+      description: |
+        Adds a user to a project by email.
+        
+        **Permissions:** Project owner or admin
+        
+        **Roles:** owner, admin, member
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id, p_user_email]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+                p_user_email:
+                  type: string
+                  format: email
+                  example: "bob@example.com"
+                p_role:
+                  type: string
+                  enum: [owner, admin, member]
+                  default: member
+      responses:
+        '200':
+          description: Member added successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project_id:
+                    $ref: '#/components/schemas/UUID'
+                  user_id:
+                    $ref: '#/components/schemas/UUID'
+                  role:
+                    type: string
+                  joined_at:
+                    $ref: '#/components/schemas/Timestamp'
+        '400':
+          description: User not found or already a member
+        '403':
+          description: Permission denied
+
+  /rest/v1/rpc/rpc__project_member_remove:
+    post:
+      tags: [Project Members]
+      summary: Remove member from project
+      description: |
+        Removes a user from a project.
+        
+        **Permissions:** 
+        - Project owner (can remove anyone)
+        - Any member (can remove themselves)
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id, p_user_id]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+                p_user_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: Member removed
+        '403':
+          description: Permission denied
+        '404':
+          description: User not a project member
+
+  /rest/v1/rpc/rpc__project_member_update_role:
+    post:
+      tags: [Project Members]
+      summary: Update member role
+      description: |
+        Changes a project member's role.
+        
+        **Permissions:** Project owner only
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id, p_user_id, p_new_role]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+                p_user_id:
+                  $ref: '#/components/schemas/UUID'
+                p_new_role:
+                  type: string
+                  enum: [owner, admin, member]
+      responses:
+        '200':
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project_id:
+                    $ref: '#/components/schemas/UUID'
+                  user_id:
+                    $ref: '#/components/schemas/UUID'
+                  role:
+                    type: string
+
+  # ======================================================
+  # CONVERSATIONS
   # ======================================================
   /rest/v1/rpc/rpc__conversation_create:
     post:
       tags: [Conversations]
       summary: Create conversation
       description: |
-        Creates a new conversation inside a project.
-        User becomes conversation owner.
+        Creates a new conversation with complete bootstrap:
+        - Conversation record
+        - Creator as member
+        - Creator as owner role
+        - Initial read state
+        
+        **Permissions:** Project member
+        
+        **Note:** Only one active conversation per project
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -231,112 +464,855 @@ paths:
           application/json:
             schema:
               type: object
-              required: [p_project_id, p_title]
               properties:
                 p_project_id:
-                  type: string
-                  format: uuid
+                  $ref: '#/components/schemas/UUID'
                 p_title:
                   type: string
+                  example: "General Discussion"
+                  nullable: true
+                p_type:
+                  type: string
+                  enum: [project, direct]
+                  default: project
+            examples:
+              project_conversation:
+                summary: Project conversation
+                value:
+                  p_project_id: "550e8400-e29b-41d4-a716-446655440000"
+                  p_title: "General Discussion"
+                  p_type: "project"
       responses:
         '200':
-          description: Conversation ID
+          description: Conversation created successfully
           content:
             application/json:
               schema:
-                type: string
-                format: uuid
+                type: object
+                properties:
+                  id:
+                    $ref: '#/components/schemas/UUID'
+                  project_id:
+                    $ref: '#/components/schemas/UUID'
+                  title:
+                    type: string
+                  type:
+                    type: string
+                  created_by:
+                    $ref: '#/components/schemas/UUID'
+                  created_at:
+                    $ref: '#/components/schemas/Timestamp'
+                  last_message_at:
+                    $ref: '#/components/schemas/Timestamp'
+                    nullable: true
+                  member_count:
+                    type: integer
+                  user_role:
+                    type: string
+        '400':
+          description: Project already has active conversation
+        '403':
+          description: Not a project member
 
-  # ======================================================
-  # CONVERSATIONS — LIST (RLS)
-  # ======================================================
-  /rest/v1/conversations:
-    get:
+  /rest/v1/rpc/rpc__conversation_list_for_user:
+    post:
       tags: [Conversations]
-      summary: List conversations
+      summary: List conversations for user
       description: |
-        Returns conversations visible to user.
-        Enforced via RLS.
+        Returns all conversations where user is a member.
+        Includes unread count per conversation.
+        
+        **Permissions:** Authenticated user
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
       responses:
         '200':
           description: Conversations list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    conversation_id:
+                      $ref: '#/components/schemas/UUID'
+                    title:
+                      type: string
+                    type:
+                      type: string
+                    last_message_at:
+                      $ref: '#/components/schemas/Timestamp'
+                    unread_count:
+                      type: integer
+
+  /rest/v1/rpc/rpc__conversation_mark_read:
+    post:
+      tags: [Conversations]
+      summary: Mark conversation as read
+      description: |
+        Updates last read message for authenticated user.
+        
+        **Permissions:** Conversation member
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id, p_message_id]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+                p_message_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: Read state updated
 
   # ======================================================
-  # MESSAGES — LIST
+  # MESSAGES
   # ======================================================
-  /rest/v1/messages:
-    get:
+  /rest/v1/rpc/rpc__message_send:
+    post:
       tags: [Messages]
-      summary: List messages
+      summary: Send message
+      description: |
+        Creates a new message in a conversation.
+        Sender automatically set from auth.uid().
+        
+        **Permissions:** Conversation member with write access
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id, p_content]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+                p_content:
+                  type: string
+                  example: "Hello team!"
+                p_message_type:
+                  type: string
+                  enum: [text, system, file]
+                  default: text
+      responses:
+        '200':
+          description: Message created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UUID'
+
+  /rest/v1/rpc/rpc__message_edit:
+    post:
+      tags: [Messages]
+      summary: Edit message
+      description: |
+        Edits message content and logs edit history.
+        
+        **Permissions:** Message sender only
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_message_id, p_new_content]
+              properties:
+                p_message_id:
+                  $ref: '#/components/schemas/UUID'
+                p_new_content:
+                  type: string
+                  example: "Updated message content"
+      responses:
+        '200':
+          description: Message updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    $ref: '#/components/schemas/UUID'
+                  conversation_id:
+                    $ref: '#/components/schemas/UUID'
+                  sender_id:
+                    $ref: '#/components/schemas/UUID'
+                  content:
+                    type: string
+                  message_type:
+                    type: string
+                  edited:
+                    type: boolean
+                  created_at:
+                    $ref: '#/components/schemas/Timestamp'
+                  updated_at:
+                    $ref: '#/components/schemas/Timestamp'
+        '403':
+          description: Only sender can edit
+
+  /rest/v1/rpc/rpc__message_delete:
+    post:
+      tags: [Messages]
+      summary: Delete message (soft delete)
+      description: |
+        Soft deletes a message.
+        
+        **Permissions:** Message sender OR conversation admin/owner
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_message_id]
+              properties:
+                p_message_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: Message deleted
+        '403':
+          description: Permission denied
+
+  /rest/v1/rpc/rpc__message_react:
+    post:
+      tags: [Messages]
+      summary: Add reaction to message
+      description: |
+        Adds emoji reaction to a message.
+        
+        **Permissions:** Conversation member with write access
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_message_id, p_reaction]
+              properties:
+                p_message_id:
+                  $ref: '#/components/schemas/UUID'
+                p_reaction:
+                  type: string
+                  example: "👍"
+      responses:
+        '204':
+          description: Reaction added
+
+  /rest/v1/rpc/rpc__message_unreact:
+    post:
+      tags: [Messages]
+      summary: Remove reaction from message
+      description: |
+        Removes user's reaction from a message.
+        
+        **Permissions:** User who reacted
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_message_id, p_reaction]
+              properties:
+                p_message_id:
+                  $ref: '#/components/schemas/UUID'
+                p_reaction:
+                  type: string
+                  example: "👍"
+      responses:
+        '204':
+          description: Reaction removed
+
+  # ======================================================
+  # TODO LISTS
+  # ======================================================
+  /rest/v1/rpc/rpc__todo_list_create:
+    post:
+      tags: [TODO Lists]
+      summary: Create TODO list
+      description: |
+        Creates a new TODO list in a project.
+        
+        **Permissions:** Project member
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+                p_title:
+                  type: string
+                  default: "Untitled List"
+                  example: "Sprint Tasks"
+      responses:
+        '200':
+          description: TODO list created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    $ref: '#/components/schemas/UUID'
+                  project_id:
+                    $ref: '#/components/schemas/UUID'
+                  title:
+                    type: string
+                  archived:
+                    type: boolean
+                  created_by:
+                    $ref: '#/components/schemas/UUID'
+                  created_at:
+                    $ref: '#/components/schemas/Timestamp'
+
+  /rest/v1/rpc/rpc__todo_list_update:
+    post:
+      tags: [TODO Lists]
+      summary: Update TODO list
+      description: |
+        Updates title or archived status of a TODO list.
+        
+        **Permissions:** Project member
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_list_id]
+              properties:
+                p_list_id:
+                  $ref: '#/components/schemas/UUID'
+                p_title:
+                  type: string
+                  nullable: true
+                p_archived:
+                  type: boolean
+                  nullable: true
+      responses:
+        '200':
+          description: TODO list updated
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /rest/v1/rpc/rpc__todo_list_delete:
+    post:
+      tags: [TODO Lists]
+      summary: Delete TODO list (soft delete)
+      description: |
+        Soft deletes a TODO list and all its items.
+        
+        **Permissions:** Project owner or admin
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_list_id]
+              properties:
+                p_list_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: TODO list deleted
+
+  # ======================================================
+  # TODO ITEMS
+  # ======================================================
+  /rest/v1/rpc/rpc__todo_item_create:
+    post:
+      tags: [TODO Items]
+      summary: Create TODO item
+      description: |
+        Creates a new TODO item in a list.
+        
+        **Permissions:** Project member
+        
+        **Priority values:** low, medium, high
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_list_id, p_title]
+              properties:
+                p_list_id:
+                  $ref: '#/components/schemas/UUID'
+                p_title:
+                  type: string
+                  example: "Fix login bug"
+                p_priority:
+                  type: string
+                  enum: [low, medium, high]
+                  nullable: true
+                p_due_date:
+                  $ref: '#/components/schemas/Date'
+                  nullable: true
+                p_assigned_to:
+                  $ref: '#/components/schemas/UUID'
+                  nullable: true
+                  description: Must be a project member
+      responses:
+        '200':
+          description: TODO item created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    $ref: '#/components/schemas/UUID'
+                  list_id:
+                    $ref: '#/components/schemas/UUID'
+                  title:
+                    type: string
+                  completed:
+                    type: boolean
+                  priority:
+                    type: string
+                  due_date:
+                    $ref: '#/components/schemas/Date'
+                  assigned_to:
+                    $ref: '#/components/schemas/UUID'
+                  completed_at:
+                    $ref: '#/components/schemas/Timestamp'
+                    nullable: true
+                  created_by:
+                    $ref: '#/components/schemas/UUID'
+                  created_at:
+                    $ref: '#/components/schemas/Timestamp'
+
+  /rest/v1/rpc/rpc__todo_item_update:
+    post:
+      tags: [TODO Items]
+      summary: Update TODO item
+      description: |
+        Updates TODO item properties.
+        
+        **Permissions:** Project member
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_item_id]
+              properties:
+                p_item_id:
+                  $ref: '#/components/schemas/UUID'
+                p_title:
+                  type: string
+                  nullable: true
+                p_priority:
+                  type: string
+                  enum: [low, medium, high, ""]
+                  nullable: true
+                  description: Empty string clears priority
+                p_due_date:
+                  $ref: '#/components/schemas/Date'
+                  nullable: true
+                p_assigned_to:
+                  $ref: '#/components/schemas/UUID'
+                  nullable: true
+      responses:
+        '200':
+          description: TODO item updated
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /rest/v1/rpc/rpc__todo_item_toggle_complete:
+    post:
+      tags: [TODO Items]
+      summary: Toggle TODO item completion
+      description: |
+        Toggles completed status. Auto-sets/clears completed_at.
+        
+        **Permissions:** Project member
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_item_id]
+              properties:
+                p_item_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '200':
+          description: TODO item toggled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  completed:
+                    type: boolean
+                  completed_at:
+                    $ref: '#/components/schemas/Timestamp'
+                    nullable: true
+
+  /rest/v1/rpc/rpc__todo_item_delete:
+    post:
+      tags: [TODO Items]
+      summary: Delete TODO item (soft delete)
+      description: |
+        Soft deletes a TODO item.
+        
+        **Permissions:** Project member
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_item_id]
+              properties:
+                p_item_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: TODO item deleted
+
+  # ======================================================
+  # FOLLOW-UPS
+  # ======================================================
+  /rest/v1/rpc/rpc__follow_up_create:
+    post:
+      tags: [Follow-ups]
+      summary: Create follow-up from message
+      description: |
+        Creates a follow-up task linked to a message.
+        
+        **Permissions:** Project member
+        
+        **Status:** pending (default), in_progress, completed, cancelled
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_message_id]
+              properties:
+                p_message_id:
+                  $ref: '#/components/schemas/UUID'
+                p_note:
+                  type: string
+                  nullable: true
+                  example: "Need to follow up on this decision"
+                p_due_at:
+                  $ref: '#/components/schemas/Timestamp'
+                  nullable: true
+      responses:
+        '200':
+          description: Follow-up created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    $ref: '#/components/schemas/UUID'
+                  project_id:
+                    $ref: '#/components/schemas/UUID'
+                  message_id:
+                    $ref: '#/components/schemas/UUID'
+                  owner_id:
+                    $ref: '#/components/schemas/UUID'
+                  status:
+                    type: string
+                  note:
+                    type: string
+                  due_at:
+                    $ref: '#/components/schemas/Timestamp'
+                  created_at:
+                    $ref: '#/components/schemas/Timestamp'
+
+  /rest/v1/rpc/rpc__follow_up_update:
+    post:
+      tags: [Follow-ups]
+      summary: Update follow-up
+      description: |
+        Updates follow-up status, note, or due date.
+        
+        **Permissions:** Project member
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_follow_up_id]
+              properties:
+                p_follow_up_id:
+                  $ref: '#/components/schemas/UUID'
+                p_status:
+                  type: string
+                  enum: [pending, in_progress, completed, cancelled]
+                  nullable: true
+                p_note:
+                  type: string
+                  nullable: true
+                p_due_at:
+                  $ref: '#/components/schemas/Timestamp'
+                  nullable: true
+      responses:
+        '200':
+          description: Follow-up updated
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /rest/v1/rpc/rpc__follow_up_delete:
+    post:
+      tags: [Follow-ups]
+      summary: Delete follow-up (soft delete)
+      description: |
+        Soft deletes a follow-up.
+        
+        **Permissions:** Follow-up owner OR project owner/admin
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_follow_up_id]
+              properties:
+                p_follow_up_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: Follow-up deleted
+
+  # ======================================================
+  # DIRECT TABLE ACCESS (RLS-protected)
+  # ======================================================
+  /rest/v1/conversations:
+    get:
+      tags: [Direct Access]
+      summary: Query conversations table
+      description: |
+        Direct access to conversations table.
+        RLS enforces user can only see their conversations.
+        
+        **Note:** Prefer using RPC endpoints.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
       parameters:
         - in: query
+          name: select
+          schema:
+            type: string
+          example: "*"
+        - in: query
+          name: project_id
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - in: query
+          name: deleted_at
+          schema:
+            type: string
+          example: "is.null"
+      responses:
+        '200':
+          description: Conversations list
+
+  /rest/v1/messages:
+    get:
+      tags: [Direct Access]
+      summary: Query messages table
+      description: |
+        Direct access to messages table.
+        RLS enforces conversation membership.
+        
+        **Note:** Prefer using RPC endpoints.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: select
+          schema:
+            type: string
+          example: "*"
+        - in: query
           name: conversation_id
           required: true
           schema:
+            $ref: '#/components/schemas/UUID'
+        - in: query
+          name: order
+          schema:
             type: string
-            format: uuid
+          example: "created_at.desc"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+          example: 50
       responses:
         '200':
           description: Messages list
 
-    post:
-      tags: [Messages]
-      summary: Send message
+  /rest/v1/todo_lists:
+    get:
+      tags: [Direct Access]
+      summary: Query TODO lists table
       description: |
-        Inserts message into conversation.
-        sender_id resolved from auth.uid().
+        Direct access to todo_lists table.
+        RLS enforces project membership.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [conversation_id, content]
-              properties:
-                conversation_id:
-                  type: string
-                  format: uuid
-                content:
-                  type: string
+      parameters:
+        - in: query
+          name: select
+          schema:
+            type: string
+          example: "*"
+        - in: query
+          name: project_id
+          required: true
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - in: query
+          name: deleted_at
+          schema:
+            type: string
+          example: "is.null"
       responses:
-        '201':
-          description: Message created
+        '200':
+          description: TODO lists
 
-  # ======================================================
-  # READ STATUS
-  # ======================================================
-  /rest/v1/conversation_reads:
-    post:
-      tags: [Messages]
-      summary: Update read state
+  /rest/v1/todo_items:
+    get:
+      tags: [Direct Access]
+      summary: Query TODO items table
       description: |
-        Updates last_read_message_id for authenticated user.
+        Direct access to todo_items table.
+        RLS enforces project membership via list_id.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [conversation_id, last_read_message_id]
-              properties:
-                conversation_id:
-                  type: string
-                  format: uuid
-                last_read_message_id:
-                  type: string
-                  format: uuid
+      parameters:
+        - in: query
+          name: select
+          schema:
+            type: string
+          example: "*"
+        - in: query
+          name: list_id
+          required: true
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - in: query
+          name: completed
+          schema:
+            type: string
+          example: "eq.false"
+        - in: query
+          name: order
+          schema:
+            type: string
+          example: "priority.desc,created_at.asc"
       responses:
-        '204':
-          description: Read state updated
+        '200':
+          description: TODO items
+
+  /rest/v1/follow_ups:
+    get:
+      tags: [Direct Access]
+      summary: Query follow-ups table
+      description: |
+        Direct access to follow_ups table.
+        RLS enforces project membership.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: select
+          schema:
+            type: string
+          example: "*"
+        - in: query
+          name: project_id
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - in: query
+          name: status
+          schema:
+            type: string
+          example: "eq.pending"
+      responses:
+        '200':
+          description: Follow-ups list
