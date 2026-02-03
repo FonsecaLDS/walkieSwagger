@@ -3,16 +3,20 @@ openapi: 3.0.3
 info:
   title: Walkie REST API
   description: |
-    Official REST API documentation for Walkie Backend.
+    Official REST API documentation for Walker Backend.
     
     **Architecture:**
     - Authentication handled via Supabase Auth
     - Business logic implemented via PostgreSQL RPCs
     - Row Level Security (RLS) enforced at database level
     - Frontend never sends user_id (resolved from auth.uid())
+
     
     **Current Version:** 2.0.0 (includes TODO, Messages, Follow-ups, Project Members)
   version: 2.0.0
+  contact:
+    name: Walker Team
+    email: support@walker.app
 
 servers:
   - url: https://ftafbdjzritdvsibpqtp.supabase.co
