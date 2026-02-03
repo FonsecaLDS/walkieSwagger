@@ -2,22 +2,27 @@ openapi: 3.0.3
 
 info:
   title: Walkie REST API
-  version: 2.0
   description: |
-    Official REST API documentation for Walkie Backend.
+    Official REST API documentation for Walker Backend.
+
+    • Authentication handled via Supabase Auth
+    • Business logic implemented via PostgreSQL RPCs
+    • Row Level Security (RLS) enforced at database level
+    • Frontend never sends user_id (resolved from auth.uid())
+  version: 1.1.0
 
 servers:
   - url: https://ftafbdjzritdvsibpqtp.supabase.co
 
 tags:
   - name: Auth
-    description: Authentication and user lifecycle (Supabase Auth)
+    description: Authentication & user identity (Supabase)
   - name: Projects
-    description: Project domain
+    description: Project management
   - name: Conversations
-    description: Conversations and memberships
+    description: Conversations & memberships
   - name: Messages
-    description: Messages and read state
+    description: Messages & read state
 
 # ==========================
 # SECURITY
@@ -39,24 +44,27 @@ components:
 # ==========================
 paths:
 
-  # =====================================================
-  # AUTH — SIGN UP
-  # =====================================================
-  /auth/v1/signup:
+  # ======================================================
+  # AUTH — SIGN UP (EMAIL / PASSWORD)
+  # ======================================================
+  /auth/v1/token:
     post:
       tags: [Auth]
-      summary: Create user (Sign up)
+      summary: Login or Sign Up with email and password
       description: |
-        Creates a new user via Supabase Auth.
+        Supabase Auth endpoint.
 
-        Post-signup behavior:
-        - public.users row is created automatically via trigger
-        - User is authenticated
-        - All RLS policies apply immediately
-
-        This endpoint is NOT part of the domain layer.
+        • grant_type=password → login
+        • grant_type=signup → create account
       security:
         - ApiKeyAuth: []
+      parameters:
+        - in: query
+          name: grant_type
+          required: true
+          schema:
+            type: string
+            enum: [password, signup]
       requestBody:
         required: true
         content:
@@ -70,63 +78,53 @@ paths:
                   example: alice@walker.dev
                 password:
                   type: string
-                  example: strongPassword123
-                data:
-                  type: object
-                  description: Optional metadata
-                  example:
-                    name: Alice
-      responses:
-        '200':
-          description: User created and authenticated
-        '400':
-          description: Invalid input
-        '409':
-          description: User already exists
-
-  # =====================================================
-  # AUTH — LOGIN
-  # =====================================================
-  /auth/v1/token:
-    post:
-      tags: [Auth]
-      summary: Login with email and password
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: query
-          name: grant_type
-          required: true
-          schema:
-            type: string
-            enum: [password]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [email, password]
-              properties:
-                email:
-                  type: string
-                password:
-                  type: string
+                  example: strongpassword123
       responses:
         '200':
           description: Authenticated successfully
-        '401':
+        '400':
           description: Invalid credentials
 
-  # =====================================================
+  # ======================================================
+  # AUTH — OAUTH (GOOGLE / APPLE)
+  # ======================================================
+  /auth/v1/authorize:
+    get:
+      tags: [Auth]
+      summary: OAuth login (Google / Apple)
+      description: |
+        Redirect-based OAuth flow.
+
+        Used for:
+        • Google Sign In
+        • Apple Sign In
+      parameters:
+        - in: query
+          name: provider
+          required: true
+          schema:
+            type: string
+            enum: [google, apple]
+        - in: query
+          name: redirect_to
+          required: false
+          schema:
+            type: string
+            example: https://app.walker.dev/auth/callback
+      responses:
+        '302':
+          description: Redirect to OAuth provider
+
+  # ======================================================
   # PROJECTS — CREATE
-  # =====================================================
+  # ======================================================
   /rest/v1/rpc/rpc__project_create:
     post:
       tags: [Projects]
       summary: Create project
       description: |
-        Creates a project and assigns the authenticated user as owner.
+        Creates a new project.
+        Authenticated user becomes owner.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -151,13 +149,13 @@ paths:
                 type: string
                 format: uuid
 
-  # =====================================================
+  # ======================================================
   # PROJECTS — LIST
-  # =====================================================
+  # ======================================================
   /rest/v1/rpc/rpc__project_list_for_user:
     post:
       tags: [Projects]
-      summary: List user projects
+      summary: List projects for authenticated user
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -180,19 +178,20 @@ paths:
                       type: boolean
                     role:
                       type: string
+                      example: owner
                     unread_messages_count:
                       type: integer
                     last_activity_at:
                       type: string
                       format: date-time
 
-  # =====================================================
+  # ======================================================
   # PROJECTS — ARCHIVE
-  # =====================================================
+  # ======================================================
   /rest/v1/rpc/rpc__project_archive:
     post:
       tags: [Projects]
-      summary: Archive / unarchive project
+      summary: Archive or unarchive project
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -213,16 +212,16 @@ paths:
         '200':
           description: Project updated
 
-  # =====================================================
-  # CONVERSATIONS — CREATE (RPC 029)
-  # =====================================================
+  # ======================================================
+  # CONVERSATIONS — CREATE (RPC)
+  # ======================================================
   /rest/v1/rpc/rpc__conversation_create:
     post:
       tags: [Conversations]
       summary: Create conversation
       description: |
         Creates a new conversation inside a project.
-        Creator becomes conversation owner automatically.
+        User becomes conversation owner.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -248,26 +247,26 @@ paths:
                 type: string
                 format: uuid
 
-  # =====================================================
+  # ======================================================
   # CONVERSATIONS — LIST (RLS)
-  # =====================================================
+  # ======================================================
   /rest/v1/conversations:
     get:
       tags: [Conversations]
       summary: List conversations
       description: |
-        Returns conversations where the authenticated user is a member.
-        Uses RLS directly (no RPC).
+        Returns conversations visible to user.
+        Enforced via RLS.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
       responses:
         '200':
-          description: Conversation list
+          description: Conversations list
 
-  # =====================================================
+  # ======================================================
   # MESSAGES — LIST
-  # =====================================================
+  # ======================================================
   /rest/v1/messages:
     get:
       tags: [Messages]
@@ -290,8 +289,8 @@ paths:
       tags: [Messages]
       summary: Send message
       description: |
-        Inserts a message into a conversation.
-        sender_id is resolved from auth.uid().
+        Inserts message into conversation.
+        sender_id resolved from auth.uid().
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -312,13 +311,15 @@ paths:
         '201':
           description: Message created
 
-  # =====================================================
+  # ======================================================
   # READ STATUS
-  # =====================================================
+  # ======================================================
   /rest/v1/conversation_reads:
     post:
       tags: [Messages]
       summary: Update read state
+      description: |
+        Updates last_read_message_id for authenticated user.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
