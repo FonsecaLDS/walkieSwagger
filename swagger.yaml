@@ -441,6 +441,115 @@ paths:
                     $ref: '#/components/schemas/UUID'
                   role:
                     type: string
+    /rest/v1/rpc/rpc__project_member_list:
+    post:
+      tags: [Project Members]
+      summary: List members of a project
+      description: |
+        Returns all members of a project.
+
+        Includes:
+        - User basic profile
+        - Role inside project
+        - Joined date
+
+        **Permissions:** Project member only
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '200':
+          description: Project members list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    user_id:
+                      $ref: '#/components/schemas/UUID'
+                    name:
+                      type: string
+                    email:
+                      type: string
+                    avatar:
+                      type: string
+                      nullable: true
+                    role:
+                      type: string
+                      enum: [owner, admin, member]
+                    joined_at:
+                      $ref: '#/components/schemas/Timestamp'
+        '403':
+          description: Permission denied
+
+    /rest/v1/rpc/rpc__project_member_search:
+    post:
+      tags: [Project Members]
+      summary: Search members of a project
+      description: |
+        Searches project members by name or email.
+
+        Case-insensitive search.
+        Useful for:
+        - Autocomplete
+        - Assigning tasks
+        - Adding members to conversations
+
+        **Permissions:** Project member only
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id, p_query]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+                p_query:
+                  type: string
+                  example: "jo"
+                  description: Search string (name or email)
+      responses:
+        '200':
+          description: Matching project members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    user_id:
+                      $ref: '#/components/schemas/UUID'
+                    name:
+                      type: string
+                    email:
+                      type: string
+                    avatar:
+                      type: string
+                      nullable: true
+                    role:
+                      type: string
+                      enum: [owner, admin, member]
+        '403':
+          description: Permission denied
+
 
   # ======================================================
   # CONVERSATIONS
