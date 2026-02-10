@@ -3,18 +3,11 @@ openapi: 3.0.3
 info:
   title: Walkie REST API
   description: |
-    Official REST API documentation for Walkie Backend.
+    Official REST API documentation for Walker Backend.
     
-    **Architecture:**
-    - Authentication handled via Supabase Auth
-    - Business logic implemented via PostgreSQL RPCs
-    - Row Level Security (RLS) enforced at database level
-    - Frontend never sends user_id (resolved from auth.uid())
-  
     
-    **Current Version:** 2.1.0 (includes User Themes: color_theme + ui_mode)
-  version: 2.1.0
-
+    **Current Version:** 2.0.0 (includes TODO, Messages, Follow-ups, Project Members)
+  version: 2.0.0
 
 servers:
   - url: https://ftafbdjzritdvsibpqtp.supabase.co
@@ -37,8 +30,6 @@ tags:
     description: TODO item management
   - name: Follow-ups
     description: Message follow-up tracking
-  - name: Notifications
-    description: User notifications & read status
   - name: Direct Access
     description: Direct table access (RLS-protected)
 
@@ -526,6 +517,10 @@ paths:
         Returns all conversations where user is a member.
         Includes unread count per conversation.
         
+        **NEW in v2.2:** Returns `marked_unread` flag to differentiate:
+        - `marked_unread: false` - Naturally unread (new messages) → Normal badge
+        - `marked_unread: true` - Manually marked unread → Special badge/indicator
+        
         **Permissions:** Authenticated user
       security:
         - ApiKeyAuth: []
@@ -550,6 +545,14 @@ paths:
                       $ref: '#/components/schemas/Timestamp'
                     unread_count:
                       type: integer
+                      description: Number of unread messages
+                    marked_unread:
+                      type: boolean
+                      description: |
+                        True if user manually marked as unread.
+                        False if naturally unread or read.
+                        Use this to show different UI indicators.
+                      example: false
 
   /rest/v1/rpc/rpc__conversation_mark_read:
     post:
@@ -577,6 +580,46 @@ paths:
       responses:
         '204':
           description: Read state updated
+
+  /rest/v1/rpc/rpc__conversation_mark_unread:
+    post:
+      tags: [Conversations]
+      summary: Mark conversation as unread
+      description: |
+        Manually marks a conversation as unread for the authenticated user.
+        Sets the `marked_unread` flag to differentiate from naturally unread conversations.
+        
+        **What it does:**
+        - Clears `last_read_message_id` (makes conversation unread)
+        - Sets `marked_unread = TRUE` (flags as manually marked)
+        - Frontend can show special UI indicator (e.g., orange badge, pin icon)
+        
+        **Use case:**
+        User wants to mark a conversation as unread to remember to return to it later.
+        Frontend should show this differently from a conversation with new messages.
+        
+        **Permissions:** Conversation member
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+                  description: ID of the conversation to mark as unread
+      responses:
+        '204':
+          description: Conversation marked as unread
+        '403':
+          description: Not a member of conversation
+        '404':
+          description: Conversation not found
 
   # ======================================================
   # MESSAGES
@@ -1035,228 +1078,6 @@ paths:
           description: TODO item deleted
 
   # ======================================================
-  # USERS (Profile & Themes)
-  # ======================================================
-  /rest/v1/rpc/rpc__user_get_profile:
-    post:
-      tags: [Auth]
-      summary: Get current user profile
-      description: |
-        Returns the complete profile of the authenticated user.
-        Includes color theme (chat colors) and UI mode (light/dark/system).
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      responses:
-        '200':
-          description: User profile
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    $ref: '#/components/schemas/UUID'
-                  name:
-                    type: string
-                  email:
-                    type: string
-                  phone:
-                    type: string
-                    nullable: true
-                  avatar:
-                    type: string
-                    nullable: true
-                  color_theme:
-                    type: string
-                    enum: [blue, purple, green, red, orange, pink, teal, indigo]
-                    nullable: true
-                    description: Chat color scheme
-                  ui_mode:
-                    type: string
-                    enum: [light, dark, system]
-                    nullable: true
-                    description: UI theme (light/dark/system)
-                  status:
-                    type: string
-                  created_at:
-                    $ref: '#/components/schemas/Timestamp'
-                  updated_at:
-                    $ref: '#/components/schemas/Timestamp'
-
-  /rest/v1/rpc/rpc__user_update_profile:
-    post:
-      tags: [Auth]
-      summary: Update user profile
-      description: |
-        Updates name, phone, or avatar of authenticated user.
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                p_name:
-                  type: string
-                  nullable: true
-                p_phone:
-                  type: string
-                  nullable: true
-                p_avatar:
-                  type: string
-                  nullable: true
-      responses:
-        '200':
-          description: Profile updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    $ref: '#/components/schemas/UUID'
-                  name:
-                    type: string
-                  email:
-                    type: string
-                  phone:
-                    type: string
-                    nullable: true
-                  avatar:
-                    type: string
-                    nullable: true
-                  color_theme:
-                    type: string
-                    nullable: true
-                  ui_mode:
-                    type: string
-                    nullable: true
-                  status:
-                    type: string
-                  updated_at:
-                    $ref: '#/components/schemas/Timestamp'
-
-  /rest/v1/rpc/rpc__user_update_color_theme:
-    post:
-      tags: [Auth]
-      summary: Update chat color theme
-      description: |
-        Updates the color theme preference for the authenticated user.
-        This controls the color scheme of the chat interface.
-        
-        **Available colors:**
-        - `blue` - Default/Primary
-        - `purple` - Royal
-        - `green` - Nature
-        - `red` - Alert
-        - `orange` - Energy
-        - `pink` - Soft
-        - `teal` - Professional
-        - `indigo` - Deep
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [p_color_theme]
-              properties:
-                p_color_theme:
-                  type: string
-                  enum: [blue, purple, green, red, orange, pink, teal, indigo]
-                  example: "purple"
-                  description: Chat color scheme
-      responses:
-        '200':
-          description: Color theme updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    $ref: '#/components/schemas/UUID'
-                  name:
-                    type: string
-                  email:
-                    type: string
-                  avatar:
-                    type: string
-                  color_theme:
-                    type: string
-                  ui_mode:
-                    type: string
-                  status:
-                    type: string
-                  updated_at:
-                    $ref: '#/components/schemas/Timestamp'
-        '400':
-          description: Invalid color theme
-
-  /rest/v1/rpc/rpc__user_update_ui_mode:
-    post:
-      tags: [Auth]
-      summary: Update UI mode (light/dark/system)
-      description: |
-        Updates the UI mode preference for the authenticated user.
-        This controls whether the interface is light or dark.
-        
-        **UI Modes:**
-        - `light` - Force light mode
-        - `dark` - Force dark mode
-        - `system` - Follow OS preference
-        - `null` - Default (treated as system)
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [p_ui_mode]
-              properties:
-                p_ui_mode:
-                  type: string
-                  enum: [light, dark, system]
-                  example: "dark"
-                  description: UI theme mode
-      responses:
-        '200':
-          description: UI mode updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    $ref: '#/components/schemas/UUID'
-                  name:
-                    type: string
-                  email:
-                    type: string
-                  avatar:
-                    type: string
-                  color_theme:
-                    type: string
-                  ui_mode:
-                    type: string
-                  status:
-                    type: string
-                  updated_at:
-                    $ref: '#/components/schemas/Timestamp'
-        '400':
-          description: Invalid UI mode
-
-  # ======================================================
   # FOLLOW-UPS
   # ======================================================
   /rest/v1/rpc/rpc__follow_up_create:
@@ -1377,6 +1198,286 @@ paths:
       responses:
         '204':
           description: Follow-up deleted
+
+  # ======================================================
+  # DIRECT TABLE ACCESS (RLS-protected)
+  # ======================================================
+  /rest/v1/conversations:
+    get:
+      tags: [Direct Access]
+      summary: Query conversations table
+      description: |
+        Direct access to conversations table.
+        RLS enforces user can only see their conversations.
+        
+        **Note:** Prefer using RPC endpoints.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: select
+          schema:
+            type: string
+          example: "*"
+        - in: query
+          name: project_id
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - in: query
+          name: deleted_at
+          schema:
+            type: string
+          example: "is.null"
+      responses:
+        '200':
+          description: Conversations list
+
+  /rest/v1/messages:
+    get:
+      tags: [Direct Access]
+      summary: Query messages table
+      description: |
+        Direct access to messages table.
+        RLS enforces conversation membership.
+        
+        **Note:** Prefer using RPC endpoints.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: select
+          schema:
+            type: string
+          example: "*"
+        - in: query
+          name: conversation_id
+          required: true
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - in: query
+          name: order
+          schema:
+            type: string
+          example: "created_at.desc"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+          example: 50
+      responses:
+        '200':
+          description: Messages list
+
+  /rest/v1/todo_lists:
+    get:
+      tags: [Direct Access]
+      summary: Query TODO lists table
+      description: |
+        Direct access to todo_lists table.
+        RLS enforces project membership.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: select
+          schema:
+            type: string
+          example: "*"
+        - in: query
+          name: project_id
+          required: true
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - in: query
+          name: deleted_at
+          schema:
+            type: string
+          example: "is.null"
+      responses:
+        '200':
+          description: TODO lists
+
+  /rest/v1/todo_items:
+    get:
+      tags: [Direct Access]
+      summary: Query TODO items table
+      description: |
+        Direct access to todo_items table.
+        RLS enforces project membership via list_id.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: select
+          schema:
+            type: string
+          example: "*"
+        - in: query
+          name: list_id
+          required: true
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - in: query
+          name: completed
+          schema:
+            type: string
+          example: "eq.false"
+        - in: query
+          name: order
+          schema:
+            type: string
+          example: "priority.desc,created_at.asc"
+      responses:
+        '200':
+          description: TODO items
+
+  /rest/v1/follow_ups:
+    get:
+      tags: [Direct Access]
+      summary: Query follow-ups table
+      description: |
+        Direct access to follow_ups table.
+        RLS enforces project membership.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: select
+          schema:
+            type: string
+          example: "*"
+        - in: query
+          name: project_id
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - in: query
+          name: status
+          schema:
+            type: string
+          example: "eq.pending"
+      responses:
+        '200':
+          description: Follow-ups list
+
+  # ======================================================
+  # USERS
+  # ======================================================
+  /rest/v1/rpc/rpc__user_get_profile:
+    post:
+      tags: [Auth]
+      summary: Get current user profile
+      description: |
+        Returns the complete profile of the authenticated user.
+        Includes theme preference.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    $ref: '#/components/schemas/UUID'
+                  name:
+                    type: string
+                  email:
+                    type: string
+                  phone:
+                    type: string
+                    nullable: true
+                  avatar:
+                    type: string
+                    nullable: true
+                  theme:
+                    type: string
+                    enum: [light, dark, system]
+                    nullable: true
+                  status:
+                    type: string
+                  created_at:
+                    $ref: '#/components/schemas/Timestamp'
+                  updated_at:
+                    $ref: '#/components/schemas/Timestamp'
+
+  /rest/v1/rpc/rpc__user_update_profile:
+    post:
+      tags: [Auth]
+      summary: Update user profile
+      description: |
+        Updates name, phone, or avatar of authenticated user.
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                p_name:
+                  type: string
+                  nullable: true
+                p_phone:
+                  type: string
+                  nullable: true
+                p_avatar:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /rest/v1/rpc/rpc__user_update_theme:
+    post:
+      tags: [Auth]
+      summary: Update user theme preference
+      description: |
+        Updates the theme preference (light/dark/system).
+        
+        **Theme values:**
+        - `light` - Force light mode
+        - `dark` - Force dark mode
+        - `system` - Follow OS preference
+        - `null` - No preference set
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_theme]
+              properties:
+                p_theme:
+                  type: string
+                  enum: [light, dark, system]
+                  example: "dark"
+      responses:
+        '200':
+          description: Theme updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  theme:
+                    type: string
 
   # ======================================================
   # CONVERSATION MEMBERS
@@ -1536,277 +1637,3 @@ paths:
       responses:
         '204':
           description: All notifications marked as read
-
-  # ======================================================
-  # DIRECT TABLE ACCESS (RLS-protected)
-  # ======================================================
-  /rest/v1/conversations:
-    get:
-      tags: [Direct Access]
-      summary: Query conversations table
-      description: |
-        Direct access to conversations table.
-        RLS enforces user can only see their conversations.
-        
-        **Note:** Prefer using RPC endpoints.
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      parameters:
-        - in: query
-          name: select
-          schema:
-            type: string
-          example: "*"
-        - in: query
-          name: project_id
-          schema:
-            $ref: '#/components/schemas/UUID'
-        - in: query
-          name: deleted_at
-          schema:
-            type: string
-          example: "is.null"
-      responses:
-        '200':
-          description: Conversations list
-
-  /rest/v1/messages:
-    get:
-      tags: [Direct Access]
-      summary: Query messages table
-      description: |
-        Direct access to messages table.
-        RLS enforces conversation membership.
-        
-        **Note:** Prefer using RPC endpoints.
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      parameters:
-        - in: query
-          name: select
-          schema:
-            type: string
-          example: "*"
-        - in: query
-          name: conversation_id
-          required: true
-          schema:
-            $ref: '#/components/schemas/UUID'
-        - in: query
-          name: order
-          schema:
-            type: string
-          example: "created_at.desc"
-        - in: query
-          name: limit
-          schema:
-            type: integer
-          example: 50
-      responses:
-        '200':
-          description: Messages list
-
-  /rest/v1/rpc/rpc__project_member_list:
-    post:
-      tags: [Project Members]
-      summary: List members of a project
-      description: |
-        Returns all members of a project.
-
-        Includes:
-        - User basic profile
-        - Role inside project
-        - Joined date
-
-        **Permissions:** Project member only
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [p_project_id]
-              properties:
-                p_project_id:
-                  $ref: '#/components/schemas/UUID'
-      responses:
-        '200':
-          description: Project members list
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    user_id:
-                      $ref: '#/components/schemas/UUID'
-                    name:
-                      type: string
-                    email:
-                      type: string
-                    avatar:
-                      type: string
-                      nullable: true
-                    role:
-                      type: string
-                      enum: [owner, admin, member]
-                    joined_at:
-                      $ref: '#/components/schemas/Timestamp'
-        '403':
-          description: Permission denied
-
-  /rest/v1/rpc/rpc__project_member_search:
-    post:
-      tags: [Project Members]
-      summary: Search members of a project
-      description: |
-        Searches project members by name or email.
-
-        Case-insensitive search.
-        Useful for:
-        - Autocomplete
-        - Assigning tasks
-        - Adding members to conversations
-
-        **Permissions:** Project member only
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [p_project_id, p_query]
-              properties:
-                p_project_id:
-                  $ref: '#/components/schemas/UUID'
-                p_query:
-                  type: string
-                  example: "jo"
-                  description: Search string (name or email)
-      responses:
-        '200':
-          description: Matching project members
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    user_id:
-                      $ref: '#/components/schemas/UUID'
-                    name:
-                      type: string
-                    email:
-                      type: string
-                    avatar:
-                      type: string
-                      nullable: true
-                    role:
-                      type: string
-                      enum: [owner, admin, member]
-        '403':
-          description: Permission denied
-
-  /rest/v1/todo_lists:
-    get:
-      tags: [Direct Access]
-      summary: Query TODO lists table
-      description: |
-        Direct access to todo_lists table.
-        RLS enforces project membership.
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      parameters:
-        - in: query
-          name: select
-          schema:
-            type: string
-          example: "*"
-        - in: query
-          name: project_id
-          required: true
-          schema:
-            $ref: '#/components/schemas/UUID'
-        - in: query
-          name: deleted_at
-          schema:
-            type: string
-          example: "is.null"
-      responses:
-        '200':
-          description: TODO lists
-
-  /rest/v1/todo_items:
-    get:
-      tags: [Direct Access]
-      summary: Query TODO items table
-      description: |
-        Direct access to todo_items table.
-        RLS enforces project membership via list_id.
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      parameters:
-        - in: query
-          name: select
-          schema:
-            type: string
-          example: "*"
-        - in: query
-          name: list_id
-          required: true
-          schema:
-            $ref: '#/components/schemas/UUID'
-        - in: query
-          name: completed
-          schema:
-            type: string
-          example: "eq.false"
-        - in: query
-          name: order
-          schema:
-            type: string
-          example: "priority.desc,created_at.asc"
-      responses:
-        '200':
-          description: TODO items
-
-  /rest/v1/follow_ups:
-    get:
-      tags: [Direct Access]
-      summary: Query follow-ups table
-      description: |
-        Direct access to follow_ups table.
-        RLS enforces project membership.
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      parameters:
-        - in: query
-          name: select
-          schema:
-            type: string
-          example: "*"
-        - in: query
-          name: project_id
-          schema:
-            $ref: '#/components/schemas/UUID'
-        - in: query
-          name: status
-          schema:
-            type: string
-          example: "eq.pending"
-      responses:
-        '200':
-          description: Follow-ups list
