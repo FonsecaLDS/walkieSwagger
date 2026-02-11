@@ -3,11 +3,11 @@ openapi: 3.0.3
 info:
   title: Walkie REST API
   description: |
-    Official REST API documentation for Walker Backend.
+    Official REST API documentation for Walkie Backend.
     
     
-    **Current Version:** 2.0.0 (includes TODO, Messages, Follow-ups, Project Members)
-  version: 2.0.0
+    **Current Version:** 2.1.0 (includes TODO, Messages, Follow-ups, Project Members, Storage)
+  version: 2.1.0
 
 servers:
   - url: https://ftafbdjzritdvsibpqtp.supabase.co
@@ -24,6 +24,8 @@ tags:
     description: Conversations & memberships
   - name: Messages
     description: Messages, reactions, edits & mentions
+  - name: Storage
+    description: File upload & media management (Supabase Storage)
   - name: TODO Lists
     description: TODO list management
   - name: TODO Items
@@ -632,6 +634,27 @@ paths:
         Creates a new message in a conversation.
         Sender automatically set from auth.uid().
         
+        **Message Types:**
+        - `text` - Regular text message
+        - `file` - Media/file message (image, video, document, audio)
+        - `system` - System notification
+        
+        **For media messages:**
+        1. Upload file to Supabase Storage (`media` bucket) using `/storage/v1/object/media/{filePath}`
+        2. Get public URL from upload response
+        3. Send message with `message_type: "file"` and JSON metadata in `content`
+        
+        **Media message content format (JSON string):**
+```json
+        {
+          "url": "https://...supabase.co/storage/v1/object/public/media/user-id/file.jpg",
+          "path": "user-id/timestamp.jpg",
+          "name": "original-filename.jpg",
+          "size": 245678,
+          "type": "image/jpeg"
+        }
+```
+        
         **Permissions:** Conversation member with write access
       security:
         - ApiKeyAuth: []
@@ -648,11 +671,54 @@ paths:
                   $ref: '#/components/schemas/UUID'
                 p_content:
                   type: string
+                  description: |
+                    - For `text` messages: Plain text content
+                    - For `file` messages: JSON string with file metadata (url, path, name, size, type)
+                    - For `system` messages: System notification text
                   example: "Hello team!"
                 p_message_type:
                   type: string
                   enum: [text, system, file]
                   default: text
+                  description: |
+                    - `text` - Regular message
+                    - `file` - Media/attachment (use JSON metadata in content)
+                    - `system` - System notification
+            examples:
+              text_message:
+                summary: Text message
+                value:
+                  p_conversation_id: "550e8400-e29b-41d4-a716-446655440000"
+                  p_content: "Hello team!"
+                  p_message_type: "text"
+              
+              image_message:
+                summary: Image message
+                value:
+                  p_conversation_id: "550e8400-e29b-41d4-a716-446655440000"
+                  p_content: "{\"url\":\"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg\",\"path\":\"550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg\",\"name\":\"screenshot.jpg\",\"size\":245678,\"type\":\"image/jpeg\"}"
+                  p_message_type: "file"
+              
+              video_message:
+                summary: Video message
+                value:
+                  p_conversation_id: "550e8400-e29b-41d4-a716-446655440000"
+                  p_content: "{\"url\":\"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456790.mp4\",\"path\":\"550e8400-e29b-41d4-a716-446655440000/1707123456790.mp4\",\"name\":\"demo-video.mp4\",\"size\":5242880,\"type\":\"video/mp4\",\"duration\":45}"
+                  p_message_type: "file"
+              
+              document_message:
+                summary: Document message (PDF)
+                value:
+                  p_conversation_id: "550e8400-e29b-41d4-a716-446655440000"
+                  p_content: "{\"url\":\"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456791.pdf\",\"path\":\"550e8400-e29b-41d4-a716-446655440000/1707123456791.pdf\",\"name\":\"proposal.pdf\",\"size\":1048576,\"type\":\"application/pdf\"}"
+                  p_message_type: "file"
+              
+              audio_message:
+                summary: Audio message
+                value:
+                  p_conversation_id: "550e8400-e29b-41d4-a716-446655440000"
+                  p_content: "{\"url\":\"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456792.mp3\",\"path\":\"550e8400-e29b-41d4-a716-446655440000/1707123456792.mp3\",\"name\":\"voice-note.mp3\",\"size\":524288,\"type\":\"audio/mpeg\",\"duration\":30}"
+                  p_message_type: "file"
       responses:
         '200':
           description: Message created
@@ -660,6 +726,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UUID'
+        '403':
+          description: Not a conversation member or no write access
 
   /rest/v1/rpc/rpc__message_edit:
     post:
@@ -794,6 +862,218 @@ paths:
       responses:
         '204':
           description: Reaction removed
+
+  # ======================================================
+  # STORAGE - SUPABASE STORAGE API
+  # ======================================================
+  /storage/v1/object/media/{filePath}:
+    post:
+      tags: [Storage]
+      summary: Upload file to media bucket
+      description: |
+        Uploads a file to Supabase Storage media bucket.
+        
+        **Bucket:** `media`
+        
+        **File path structure:** `{user_id}/{timestamp}.{extension}`
+        
+        **Complete workflow to send media message:**
+        1. **Upload file** → Use this endpoint (POST)
+        2. **Get public URL** → From response or use `/storage/v1/object/public/media/{filePath}`
+        3. **Send message** → Call `rpc__message_send` with `message_type: "file"` and JSON metadata in `content`
+        
+        **Allowed file types:**
+        - **Images:** jpg, jpeg, png, gif, webp, svg
+        - **Videos:** mp4, mov, avi, webm
+        - **Documents:** pdf, doc, docx, txt, csv, xlsx
+        - **Audio:** mp3, wav, m4a, ogg
+        
+        **Max file size:** 50MB (configurable in bucket settings)
+        
+        **RLS Policies:** User must be authenticated and can only upload to their own folder (`{user_id}/`)
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: filePath
+          required: true
+          schema:
+            type: string
+          example: "550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
+          description: |
+            Path format: `{user_id}/{timestamp}.{extension}`
+            
+            Examples:
+            - `550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg`
+            - `550e8400-e29b-41d4-a716-446655440000/1707123456790.pdf`
+            - `550e8400-e29b-41d4-a716-446655440000/1707123456791.mp4`
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The file to upload
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/png:
+            schema:
+              type: string
+              format: binary
+          video/mp4:
+            schema:
+              type: string
+              format: binary
+          application/pdf:
+            schema:
+              type: string
+              format: binary
+          audio/mpeg:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: File uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Key:
+                    type: string
+                    example: "media/550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
+                    description: Storage path of the uploaded file
+              example:
+                Key: "media/550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
+        '400':
+          description: Invalid file, file too large, or invalid path
+        '401':
+          description: Unauthorized - missing or invalid authentication token
+        '403':
+          description: Permission denied - user can only upload to their own folder
+
+    get:
+      tags: [Storage]
+      summary: Download/view file
+      description: |
+        Retrieves a file from the media bucket.
+        
+        **Public bucket:** Files are publicly accessible without authentication
+        **Private bucket:** Requires authentication and proper RLS permissions
+        
+        For public URLs, use: `/storage/v1/object/public/media/{filePath}`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: filePath
+          required: true
+          schema:
+            type: string
+          example: "550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
+      responses:
+        '200':
+          description: File content
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: File not found
+
+    delete:
+      tags: [Storage]
+      summary: Delete file
+      description: |
+        Deletes a file from storage.
+        
+        **Permissions:** File owner only (user can only delete files in their own folder)
+        
+        **RLS:** Enforced based on folder path matching user ID
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: filePath
+          required: true
+          schema:
+            type: string
+          example: "550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
+      responses:
+        '204':
+          description: File deleted successfully
+        '403':
+          description: Permission denied - can only delete own files
+        '404':
+          description: File not found
+
+  /storage/v1/object/public/media/{filePath}:
+    get:
+      tags: [Storage]
+      summary: Get public URL for file
+      description: |
+        Returns the public URL for a file in the media bucket.
+        
+        **Note:** Only works if bucket is configured as public
+        
+        This endpoint is used to get direct CDN links for embedding images/videos in the UI.
+      parameters:
+        - in: path
+          name: filePath
+          required: true
+          schema:
+            type: string
+          example: "550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
+          description: Path to the file in the media bucket
+      responses:
+        '200':
+          description: File content (redirects to CDN)
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: File not found
 
   # ======================================================
   # TODO LISTS
