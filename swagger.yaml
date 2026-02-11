@@ -626,7 +626,7 @@ paths:
   # ======================================================
   # MESSAGES
   # ======================================================
-  /rest/v1/rpc/rpc__message_send:
+/rest/v1/rpc/rpc__message_send:
     post:
       tags: [Messages]
       summary: Send message
@@ -645,7 +645,7 @@ paths:
         3. Send message with `message_type: "file"` and JSON metadata in `content`
         
         **Media message content format (JSON string):**
-```json
+```
         {
           "url": "https://...supabase.co/storage/v1/object/public/media/user-id/file.jpg",
           "path": "user-id/timestamp.jpg",
