@@ -626,7 +626,7 @@ paths:
   # ======================================================
   # MESSAGES
   # ======================================================
-/rest/v1/rpc/rpc__message_send:
+  /rest/v1/rpc/rpc__message_send:
     post:
       tags: [Messages]
       summary: Send message
@@ -645,7 +645,7 @@ paths:
         3. Send message with `message_type: "file"` and JSON metadata in `content`
         
         **Media message content format (JSON string):**
-```
+        
         {
           "url": "https://...supabase.co/storage/v1/object/public/media/user-id/file.jpg",
           "path": "user-id/timestamp.jpg",
@@ -653,7 +653,6 @@ paths:
           "size": 245678,
           "type": "image/jpeg"
         }
-```
         
         **Permissions:** Conversation member with write access
       security:
@@ -696,28 +695,32 @@ paths:
                 summary: Image message
                 value:
                   p_conversation_id: "550e8400-e29b-41d4-a716-446655440000"
-                  p_content: "{\"url\":\"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg\",\"path\":\"550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg\",\"name\":\"screenshot.jpg\",\"size\":245678,\"type\":\"image/jpeg\"}"
+                  p_content: >
+                    {"url":"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg","path":"550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg","name":"screenshot.jpg","size":245678,"type":"image/jpeg"}
                   p_message_type: "file"
               
               video_message:
                 summary: Video message
                 value:
                   p_conversation_id: "550e8400-e29b-41d4-a716-446655440000"
-                  p_content: "{\"url\":\"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456790.mp4\",\"path\":\"550e8400-e29b-41d4-a716-446655440000/1707123456790.mp4\",\"name\":\"demo-video.mp4\",\"size\":5242880,\"type\":\"video/mp4\",\"duration\":45}"
+                  p_content: >
+                    {"url":"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456790.mp4","path":"550e8400-e29b-41d4-a716-446655440000/1707123456790.mp4","name":"demo-video.mp4","size":5242880,"type":"video/mp4","duration":45}
                   p_message_type: "file"
               
               document_message:
                 summary: Document message (PDF)
                 value:
                   p_conversation_id: "550e8400-e29b-41d4-a716-446655440000"
-                  p_content: "{\"url\":\"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456791.pdf\",\"path\":\"550e8400-e29b-41d4-a716-446655440000/1707123456791.pdf\",\"name\":\"proposal.pdf\",\"size\":1048576,\"type\":\"application/pdf\"}"
+                  p_content: >
+                    {"url":"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456791.pdf","path":"550e8400-e29b-41d4-a716-446655440000/1707123456791.pdf","name":"proposal.pdf","size":1048576,"type":"application/pdf"}
                   p_message_type: "file"
               
               audio_message:
                 summary: Audio message
                 value:
                   p_conversation_id: "550e8400-e29b-41d4-a716-446655440000"
-                  p_content: "{\"url\":\"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456792.mp3\",\"path\":\"550e8400-e29b-41d4-a716-446655440000/1707123456792.mp3\",\"name\":\"voice-note.mp3\",\"size\":524288,\"type\":\"audio/mpeg\",\"duration\":30}"
+                  p_content: >
+                    {"url":"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456792.mp3","path":"550e8400-e29b-41d4-a716-446655440000/1707123456792.mp3","name":"voice-note.mp3","size":524288,"type":"audio/mpeg","duration":30}
                   p_message_type: "file"
       responses:
         '200':
