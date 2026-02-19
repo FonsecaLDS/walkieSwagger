@@ -6,8 +6,8 @@ info:
     Official REST API documentation for Walkie Backend.
     
     
-    **Current Version:** 2.1.0 (includes TODO, Messages, Follow-ups, Project Members, Storage)
-  version: 2.1.0
+    **Current Version:** 2.2.2 (Multiple Conversations per Project + Naming Aliases)
+  version: 2.2.2
 
 servers:
   - url: https://ftafbdjzritdvsibpqtp.supabase.co
@@ -17,11 +17,11 @@ tags:
   - name: Auth
     description: Authentication & user identity (Supabase)
   - name: Projects
-    description: Project management & membership
+    description: Project management & membership (Backend "Projects" = Frontend "Conversations/Workspaces")
   - name: Project Members
     description: Add/remove/update project members
   - name: Conversations
-    description: Conversations & memberships
+    description: Conversations & memberships (Backend "Conversations" = Frontend "Projects/Channels")
   - name: Messages
     description: Messages, reactions, edits & mentions
   - name: Storage
@@ -32,6 +32,13 @@ tags:
     description: TODO item management
   - name: Follow-ups
     description: Message follow-up tracking
+  - name: Aliases v2
+    description: |
+      Frontend-friendly naming aliases (v2.2.2).
+      
+      **Naming Map:**
+      - Frontend "Conversation" (Workspace) = Backend `project`
+      - Frontend "Project" (Channel/Thread) = Backend `conversation`
   - name: Direct Access
     description: Direct table access (RLS-protected)
 
@@ -216,6 +223,8 @@ paths:
       description: |
         Creates a new project. Authenticated user becomes owner.
         
+        **Frontend mapping:** This is a "Conversation" (Workspace) in the frontend.
+        
         **Permissions:** Any authenticated user
       security:
         - ApiKeyAuth: []
@@ -248,6 +257,8 @@ paths:
       summary: List projects for authenticated user
       description: |
         Returns all projects where user is a member.
+        
+        **Frontend mapping:** Returns "Conversations" (Workspaces) in the frontend.
         
         **Permissions:** Authenticated user
       security:
@@ -435,6 +446,97 @@ paths:
                   role:
                     type: string
 
+  /rest/v1/rpc/rpc__project_member_list:
+    post:
+      tags: [Project Members]
+      summary: List project members
+      description: |
+        Returns all members of a project.
+        
+        **Permissions:** Project member
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '200':
+          description: Members list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    user_id:
+                      $ref: '#/components/schemas/UUID'
+                    name:
+                      type: string
+                    email:
+                      type: string
+                    avatar:
+                      type: string
+                      nullable: true
+                    role:
+                      type: string
+                    joined_at:
+                      $ref: '#/components/schemas/Timestamp'
+
+  /rest/v1/rpc/rpc__project_member_search:
+    post:
+      tags: [Project Members]
+      summary: Search project members
+      description: |
+        Searches members of a project by name or email.
+        
+        **Permissions:** Project member
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id, p_query]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+                p_query:
+                  type: string
+                  example: "alice"
+      responses:
+        '200':
+          description: Matching members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    user_id:
+                      $ref: '#/components/schemas/UUID'
+                    name:
+                      type: string
+                    email:
+                      type: string
+                    avatar:
+                      type: string
+                      nullable: true
+                    role:
+                      type: string
+
   # ======================================================
   # CONVERSATIONS
   # ======================================================
@@ -451,7 +553,10 @@ paths:
         
         **Permissions:** Project member
         
-        **Note:** Only one active conversation per project
+        **Note (v2.2.1):** Multiple conversations per project are now supported.
+        The previous restriction of one conversation per project has been removed.
+        
+        **Frontend mapping:** This is a "Project" (Channel/Thread) in the frontend.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -479,6 +584,12 @@ paths:
                   p_project_id: "550e8400-e29b-41d4-a716-446655440000"
                   p_title: "General Discussion"
                   p_type: "project"
+              direct_conversation:
+                summary: Direct conversation
+                value:
+                  p_project_id: "550e8400-e29b-41d4-a716-446655440000"
+                  p_title: "Alice & Bob"
+                  p_type: "direct"
       responses:
         '200':
           description: Conversation created successfully
@@ -506,8 +617,6 @@ paths:
                     type: integer
                   user_role:
                     type: string
-        '400':
-          description: Project already has active conversation
         '403':
           description: Not a project member
 
@@ -596,10 +705,6 @@ paths:
         - Sets `marked_unread = TRUE` (flags as manually marked)
         - Frontend can show special UI indicator (e.g., orange badge, pin icon)
         
-        **Use case:**
-        User wants to mark a conversation as unread to remember to return to it later.
-        Frontend should show this differently from a conversation with new messages.
-        
         **Permissions:** Conversation member
       security:
         - ApiKeyAuth: []
@@ -622,6 +727,89 @@ paths:
           description: Not a member of conversation
         '404':
           description: Conversation not found
+
+  /rest/v1/rpc/rpc__conversation_member_add:
+    post:
+      tags: [Conversations]
+      summary: Add member to conversation
+      description: |
+        Adds a user to a conversation.
+        Creates: conversation_member, conversation_role (member), conversation_read.
+        
+        **Permissions:** Conversation owner or admin
+        
+        **Note:** User must be a project member first
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id, p_user_id]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+                p_user_id:
+                  $ref: '#/components/schemas/UUID'
+                  description: Must be a project member
+      responses:
+        '200':
+          description: Member added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversation_id:
+                    $ref: '#/components/schemas/UUID'
+                  user_id:
+                    $ref: '#/components/schemas/UUID'
+                  role:
+                    type: string
+                    example: member
+        '400':
+          description: User not a project member or already in conversation
+        '403':
+          description: Permission denied
+
+  /rest/v1/rpc/rpc__conversation_member_remove:
+    post:
+      tags: [Conversations]
+      summary: Remove member from conversation
+      description: |
+        Removes a user from a conversation.
+        Deletes: conversation_reads, conversation_roles, conversation_members.
+        
+        **Permissions:** 
+        - Conversation owner (can remove anyone)
+        - Self-remove (any member can leave)
+        
+        **Protection:** Cannot remove owner (unless self-remove)
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id, p_user_id]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+                p_user_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: Member removed
+        '403':
+          description: Permission denied
+        '404':
+          description: User not a conversation member
 
   # ======================================================
   # MESSAGES
@@ -679,10 +867,6 @@ paths:
                   type: string
                   enum: [text, system, file]
                   default: text
-                  description: |
-                    - `text` - Regular message
-                    - `file` - Media/attachment (use JSON metadata in content)
-                    - `system` - System notification
             examples:
               text_message:
                 summary: Text message
@@ -690,7 +874,6 @@ paths:
                   p_conversation_id: "550e8400-e29b-41d4-a716-446655440000"
                   p_content: "Hello team!"
                   p_message_type: "text"
-              
               image_message:
                 summary: Image message
                 value:
@@ -698,7 +881,6 @@ paths:
                   p_content: >
                     {"url":"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg","path":"550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg","name":"screenshot.jpg","size":245678,"type":"image/jpeg"}
                   p_message_type: "file"
-              
               video_message:
                 summary: Video message
                 value:
@@ -706,7 +888,6 @@ paths:
                   p_content: >
                     {"url":"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456790.mp4","path":"550e8400-e29b-41d4-a716-446655440000/1707123456790.mp4","name":"demo-video.mp4","size":5242880,"type":"video/mp4","duration":45}
                   p_message_type: "file"
-              
               document_message:
                 summary: Document message (PDF)
                 value:
@@ -714,7 +895,6 @@ paths:
                   p_content: >
                     {"url":"https://ftafbdjzritdvsibpqtp.supabase.co/storage/v1/object/public/media/550e8400-e29b-41d4-a716-446655440000/1707123456791.pdf","path":"550e8400-e29b-41d4-a716-446655440000/1707123456791.pdf","name":"proposal.pdf","size":1048576,"type":"application/pdf"}
                   p_message_type: "file"
-              
               audio_message:
                 summary: Audio message
                 value:
@@ -867,7 +1047,7 @@ paths:
           description: Reaction removed
 
   # ======================================================
-  # STORAGE - SUPABASE STORAGE API
+  # STORAGE
   # ======================================================
   /storage/v1/object/media/{filePath}:
     post:
@@ -891,7 +1071,7 @@ paths:
         - **Documents:** pdf, doc, docx, txt, csv, xlsx
         - **Audio:** mp3, wav, m4a, ogg
         
-        **Max file size:** 50MB (configurable in bucket settings)
+        **Max file size:** 50MB
         
         **RLS Policies:** User must be authenticated and can only upload to their own folder (`{user_id}/`)
       security:
@@ -904,13 +1084,6 @@ paths:
           schema:
             type: string
           example: "550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
-          description: |
-            Path format: `{user_id}/{timestamp}.{extension}`
-            
-            Examples:
-            - `550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg`
-            - `550e8400-e29b-41d4-a716-446655440000/1707123456790.pdf`
-            - `550e8400-e29b-41d4-a716-446655440000/1707123456791.mp4`
       requestBody:
         required: true
         content:
@@ -921,7 +1094,6 @@ paths:
                 file:
                   type: string
                   format: binary
-                  description: The file to upload
           image/jpeg:
             schema:
               type: string
@@ -953,26 +1125,16 @@ paths:
                   Key:
                     type: string
                     example: "media/550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
-                    description: Storage path of the uploaded file
-              example:
-                Key: "media/550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
         '400':
           description: Invalid file, file too large, or invalid path
         '401':
-          description: Unauthorized - missing or invalid authentication token
+          description: Unauthorized
         '403':
-          description: Permission denied - user can only upload to their own folder
+          description: Permission denied
 
     get:
       tags: [Storage]
       summary: Download/view file
-      description: |
-        Retrieves a file from the media bucket.
-        
-        **Public bucket:** Files are publicly accessible without authentication
-        **Private bucket:** Requires authentication and proper RLS permissions
-        
-        For public URLs, use: `/storage/v1/object/public/media/{filePath}`
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -982,43 +1144,15 @@ paths:
           required: true
           schema:
             type: string
-          example: "550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
       responses:
         '200':
           description: File content
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-            video/mp4:
-              schema:
-                type: string
-                format: binary
-            application/pdf:
-              schema:
-                type: string
-                format: binary
-            audio/mpeg:
-              schema:
-                type: string
-                format: binary
         '404':
           description: File not found
 
     delete:
       tags: [Storage]
       summary: Delete file
-      description: |
-        Deletes a file from storage.
-        
-        **Permissions:** File owner only (user can only delete files in their own folder)
-        
-        **RLS:** Enforced based on folder path matching user ID
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1028,12 +1162,11 @@ paths:
           required: true
           schema:
             type: string
-          example: "550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
       responses:
         '204':
           description: File deleted successfully
         '403':
-          description: Permission denied - can only delete own files
+          description: Permission denied
         '404':
           description: File not found
 
@@ -1041,40 +1174,15 @@ paths:
     get:
       tags: [Storage]
       summary: Get public URL for file
-      description: |
-        Returns the public URL for a file in the media bucket.
-        
-        **Note:** Only works if bucket is configured as public
-        
-        This endpoint is used to get direct CDN links for embedding images/videos in the UI.
       parameters:
         - in: path
           name: filePath
           required: true
           schema:
             type: string
-          example: "550e8400-e29b-41d4-a716-446655440000/1707123456789.jpg"
-          description: Path to the file in the media bucket
       responses:
         '200':
           description: File content (redirects to CDN)
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-            video/mp4:
-              schema:
-                type: string
-                format: binary
-            application/pdf:
-              schema:
-                type: string
-                format: binary
         '404':
           description: File not found
 
@@ -1085,10 +1193,6 @@ paths:
     post:
       tags: [TODO Lists]
       summary: Create TODO list
-      description: |
-        Creates a new TODO list in a project.
-        
-        **Permissions:** Project member
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1131,10 +1235,6 @@ paths:
     post:
       tags: [TODO Lists]
       summary: Update TODO list
-      description: |
-        Updates title or archived status of a TODO list.
-        
-        **Permissions:** Project member
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1157,19 +1257,11 @@ paths:
       responses:
         '200':
           description: TODO list updated
-          content:
-            application/json:
-              schema:
-                type: object
 
   /rest/v1/rpc/rpc__todo_list_delete:
     post:
       tags: [TODO Lists]
       summary: Delete TODO list (soft delete)
-      description: |
-        Soft deletes a TODO list and all its items.
-        
-        **Permissions:** Project owner or admin
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1194,12 +1286,6 @@ paths:
     post:
       tags: [TODO Items]
       summary: Create TODO item
-      description: |
-        Creates a new TODO item in a list.
-        
-        **Permissions:** Project member
-        
-        **Priority values:** low, medium, high
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1226,7 +1312,6 @@ paths:
                 p_assigned_to:
                   $ref: '#/components/schemas/UUID'
                   nullable: true
-                  description: Must be a project member
       responses:
         '200':
           description: TODO item created
@@ -1261,10 +1346,6 @@ paths:
     post:
       tags: [TODO Items]
       summary: Update TODO item
-      description: |
-        Updates TODO item properties.
-        
-        **Permissions:** Project member
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1285,7 +1366,6 @@ paths:
                   type: string
                   enum: [low, medium, high, ""]
                   nullable: true
-                  description: Empty string clears priority
                 p_due_date:
                   $ref: '#/components/schemas/Date'
                   nullable: true
@@ -1295,19 +1375,11 @@ paths:
       responses:
         '200':
           description: TODO item updated
-          content:
-            application/json:
-              schema:
-                type: object
 
   /rest/v1/rpc/rpc__todo_item_toggle_complete:
     post:
       tags: [TODO Items]
       summary: Toggle TODO item completion
-      description: |
-        Toggles completed status. Auto-sets/clears completed_at.
-        
-        **Permissions:** Project member
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1339,10 +1411,6 @@ paths:
     post:
       tags: [TODO Items]
       summary: Delete TODO item (soft delete)
-      description: |
-        Soft deletes a TODO item.
-        
-        **Permissions:** Project member
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1367,12 +1435,6 @@ paths:
     post:
       tags: [Follow-ups]
       summary: Create follow-up from message
-      description: |
-        Creates a follow-up task linked to a message.
-        
-        **Permissions:** Project member
-        
-        **Status:** pending (default), in_progress, completed, cancelled
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1422,10 +1484,6 @@ paths:
     post:
       tags: [Follow-ups]
       summary: Update follow-up
-      description: |
-        Updates follow-up status, note, or due date.
-        
-        **Permissions:** Project member
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1452,19 +1510,11 @@ paths:
       responses:
         '200':
           description: Follow-up updated
-          content:
-            application/json:
-              schema:
-                type: object
 
   /rest/v1/rpc/rpc__follow_up_delete:
     post:
       tags: [Follow-ups]
       summary: Delete follow-up (soft delete)
-      description: |
-        Soft deletes a follow-up.
-        
-        **Permissions:** Follow-up owner OR project owner/admin
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1481,6 +1531,696 @@ paths:
       responses:
         '204':
           description: Follow-up deleted
+
+  # ======================================================
+  # ALIASES V2 — CONVERSATIONS (Frontend) = PROJECTS (Backend)
+  # ======================================================
+  /rest/v1/rpc/rpc__conversation_create_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] Create conversation/workspace (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__project_create`.
+        
+        In the frontend, a "Conversation" is a Workspace/top-level container.
+        This maps to a backend `project`.
+        
+        **Delegates to:** `rpc__project_create(p_name, p_description)`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_name, p_description]
+              properties:
+                p_name:
+                  type: string
+                  example: "My Workspace"
+                p_description:
+                  type: string
+                  example: "Team workspace"
+      responses:
+        '200':
+          description: Workspace created — returns UUID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UUID'
+
+  /rest/v1/rpc/rpc__conversation_list_for_user_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] List conversations/workspaces for user (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__project_list_for_user`.
+        
+        Returns workspaces where the user is a member.
+        
+        **Delegates to:** `rpc__project_list_for_user()`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Workspaces list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    conversation_id:
+                      $ref: '#/components/schemas/UUID'
+                    name:
+                      type: string
+                    description:
+                      type: string
+                    archived:
+                      type: boolean
+                    role:
+                      type: string
+                      enum: [owner, admin, member]
+                    unread_messages_count:
+                      type: integer
+                    last_activity_at:
+                      $ref: '#/components/schemas/Timestamp'
+
+  /rest/v1/rpc/rpc__conversation_archive_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] Archive/unarchive conversation/workspace (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__project_archive`.
+        
+        **Delegates to:** `rpc__project_archive(p_conversation_id, p_archived)`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id, p_archived]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+                p_archived:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated
+
+  /rest/v1/rpc/rpc__conversation_member_add_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] Add member to conversation/workspace (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__project_member_add`.
+        
+        **Delegates to:** `rpc__project_member_add(p_conversation_id, p_user_email, p_role)`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id, p_user_email]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+                p_user_email:
+                  type: string
+                  format: email
+                p_role:
+                  type: string
+                  enum: [owner, admin, member]
+                  default: member
+      responses:
+        '200':
+          description: Member added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversation_id:
+                    $ref: '#/components/schemas/UUID'
+                  user_id:
+                    $ref: '#/components/schemas/UUID'
+                  role:
+                    type: string
+                  joined_at:
+                    $ref: '#/components/schemas/Timestamp'
+
+  /rest/v1/rpc/rpc__conversation_member_remove_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] Remove member from conversation/workspace (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__project_member_remove`.
+        
+        **Delegates to:** `rpc__project_member_remove(p_conversation_id, p_user_id)`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id, p_user_id]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+                p_user_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: Member removed
+
+  /rest/v1/rpc/rpc__conversation_member_update_role_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] Update member role in conversation/workspace (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__project_member_update_role`.
+        
+        **Delegates to:** `rpc__project_member_update_role(p_conversation_id, p_user_id, p_new_role)`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id, p_user_id, p_new_role]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+                p_user_id:
+                  $ref: '#/components/schemas/UUID'
+                p_new_role:
+                  type: string
+                  enum: [owner, admin, member]
+      responses:
+        '200':
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversation_id:
+                    $ref: '#/components/schemas/UUID'
+                  user_id:
+                    $ref: '#/components/schemas/UUID'
+                  role:
+                    type: string
+
+  /rest/v1/rpc/rpc__conversation_member_list_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] List members of conversation/workspace (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__project_member_list`.
+        
+        **Delegates to:** `rpc__project_member_list(p_conversation_id)`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '200':
+          description: Members list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    user_id:
+                      $ref: '#/components/schemas/UUID'
+                    name:
+                      type: string
+                    email:
+                      type: string
+                    avatar:
+                      type: string
+                      nullable: true
+                    role:
+                      type: string
+                    joined_at:
+                      $ref: '#/components/schemas/Timestamp'
+
+  /rest/v1/rpc/rpc__conversation_member_search_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] Search members of conversation/workspace (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__project_member_search`.
+        
+        **Delegates to:** `rpc__project_member_search(p_conversation_id, p_query)`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id, p_query]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+                p_query:
+                  type: string
+                  example: "alice"
+      responses:
+        '200':
+          description: Matching members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    user_id:
+                      $ref: '#/components/schemas/UUID'
+                    name:
+                      type: string
+                    email:
+                      type: string
+                    avatar:
+                      type: string
+                      nullable: true
+                    role:
+                      type: string
+
+  # ======================================================
+  # ALIASES V2 — PROJECTS (Frontend) = CONVERSATIONS (Backend)
+  # ======================================================
+  /rest/v1/rpc/rpc__project_create_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] Create project/channel (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__conversation_create`.
+        
+        In the frontend, a "Project" is a Channel/Thread inside a workspace.
+        This maps to a backend `conversation`.
+        
+        **Delegates to:** `rpc__conversation_create(p_conversation_id, p_title, p_type)`
+        
+        **Note:** Multiple projects per workspace are supported (v2.2.1).
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_conversation_id]
+              properties:
+                p_conversation_id:
+                  $ref: '#/components/schemas/UUID'
+                  description: ID of the parent workspace (backend project)
+                p_title:
+                  type: string
+                  example: "General"
+                  nullable: true
+                p_type:
+                  type: string
+                  enum: [project, direct]
+                  default: project
+      responses:
+        '200':
+          description: Project/channel created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    $ref: '#/components/schemas/UUID'
+                  conversation_id:
+                    $ref: '#/components/schemas/UUID'
+                    description: ID of the parent workspace
+                  title:
+                    type: string
+                  type:
+                    type: string
+                  created_by:
+                    $ref: '#/components/schemas/UUID'
+                  created_at:
+                    $ref: '#/components/schemas/Timestamp'
+                  last_message_at:
+                    $ref: '#/components/schemas/Timestamp'
+                    nullable: true
+                  member_count:
+                    type: integer
+                  user_role:
+                    type: string
+        '403':
+          description: Not a workspace member
+
+  /rest/v1/rpc/rpc__project_list_for_user_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] List projects/channels for user (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__conversation_list_for_user`.
+        
+        Returns projects (channels/threads) where user is a member.
+        
+        **Delegates to:** `rpc__conversation_list_for_user()`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Projects/channels list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    project_id:
+                      $ref: '#/components/schemas/UUID'
+                    title:
+                      type: string
+                    type:
+                      type: string
+                    last_message_at:
+                      $ref: '#/components/schemas/Timestamp'
+                    unread_count:
+                      type: integer
+                    marked_unread:
+                      type: boolean
+
+  /rest/v1/rpc/rpc__project_mark_read_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] Mark project/channel as read (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__conversation_mark_read`.
+        
+        **Delegates to:** `rpc__conversation_mark_read(p_project_id, p_message_id)`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id, p_message_id]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+                p_message_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: Read state updated
+
+  /rest/v1/rpc/rpc__project_mark_unread_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] Mark project/channel as unread (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__conversation_mark_unread`.
+        
+        **Delegates to:** `rpc__conversation_mark_unread(p_project_id)`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: Marked as unread
+
+  /rest/v1/rpc/rpc__project_member_add_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] Add member to project/channel (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__conversation_member_add`.
+        
+        **Delegates to:** `rpc__conversation_member_add(p_project_id, p_user_id)`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id, p_user_id]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+                p_user_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '200':
+          description: Member added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project_id:
+                    $ref: '#/components/schemas/UUID'
+                  user_id:
+                    $ref: '#/components/schemas/UUID'
+                  role:
+                    type: string
+
+  /rest/v1/rpc/rpc__project_member_remove_v2:
+    post:
+      tags: [Aliases v2]
+      summary: "[Alias] Remove member from project/channel (Frontend)"
+      description: |
+        **Frontend alias** for `rpc__conversation_member_remove`.
+        
+        **Delegates to:** `rpc__conversation_member_remove(p_project_id, p_user_id)`
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_project_id, p_user_id]
+              properties:
+                p_project_id:
+                  $ref: '#/components/schemas/UUID'
+                p_user_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: Member removed
+
+  # ======================================================
+  # USERS
+  # ======================================================
+  /rest/v1/rpc/rpc__user_get_profile:
+    post:
+      tags: [Auth]
+      summary: Get current user profile
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    $ref: '#/components/schemas/UUID'
+                  name:
+                    type: string
+                  email:
+                    type: string
+                  phone:
+                    type: string
+                    nullable: true
+                  avatar:
+                    type: string
+                    nullable: true
+                  theme:
+                    type: string
+                    enum: [light, dark, system]
+                    nullable: true
+                  status:
+                    type: string
+                  created_at:
+                    $ref: '#/components/schemas/Timestamp'
+                  updated_at:
+                    $ref: '#/components/schemas/Timestamp'
+
+  /rest/v1/rpc/rpc__user_update_profile:
+    post:
+      tags: [Auth]
+      summary: Update user profile
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                p_name:
+                  type: string
+                  nullable: true
+                p_phone:
+                  type: string
+                  nullable: true
+                p_avatar:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: Profile updated
+
+  /rest/v1/rpc/rpc__user_update_theme:
+    post:
+      tags: [Auth]
+      summary: Update user theme preference
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_theme]
+              properties:
+                p_theme:
+                  type: string
+                  enum: [light, dark, system]
+                  example: "dark"
+      responses:
+        '200':
+          description: Theme updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  theme:
+                    type: string
+
+  # ======================================================
+  # NOTIFICATIONS
+  # ======================================================
+  /rest/v1/rpc/rpc__notification_list_for_user:
+    post:
+      tags: [Notifications]
+      summary: List notifications for user
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread:
+                    type: array
+                    items:
+                      type: object
+                  all:
+                    type: array
+                    items:
+                      type: object
+
+  /rest/v1/rpc/rpc__notification_mark_read:
+    post:
+      tags: [Notifications]
+      summary: Mark notification as read
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_notification_id]
+              properties:
+                p_notification_id:
+                  $ref: '#/components/schemas/UUID'
+      responses:
+        '204':
+          description: Notification marked as read
+        '404':
+          description: Not found
+
+  /rest/v1/rpc/rpc__notification_mark_all_read:
+    post:
+      tags: [Notifications]
+      summary: Mark all notifications as read
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '204':
+          description: All notifications marked as read
 
   # ======================================================
   # DIRECT TABLE ACCESS (RLS-protected)
@@ -1520,11 +2260,6 @@ paths:
     get:
       tags: [Direct Access]
       summary: Query messages table
-      description: |
-        Direct access to messages table.
-        RLS enforces conversation membership.
-        
-        **Note:** Prefer using RPC endpoints.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1557,9 +2292,6 @@ paths:
     get:
       tags: [Direct Access]
       summary: Query TODO lists table
-      description: |
-        Direct access to todo_lists table.
-        RLS enforces project membership.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1587,9 +2319,6 @@ paths:
     get:
       tags: [Direct Access]
       summary: Query TODO items table
-      description: |
-        Direct access to todo_items table.
-        RLS enforces project membership via list_id.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1622,9 +2351,6 @@ paths:
     get:
       tags: [Direct Access]
       summary: Query follow-ups table
-      description: |
-        Direct access to follow_ups table.
-        RLS enforces project membership.
       security:
         - ApiKeyAuth: []
         - BearerAuth: []
@@ -1646,277 +2372,3 @@ paths:
       responses:
         '200':
           description: Follow-ups list
-
-  # ======================================================
-  # USERS
-  # ======================================================
-  /rest/v1/rpc/rpc__user_get_profile:
-    post:
-      tags: [Auth]
-      summary: Get current user profile
-      description: |
-        Returns the complete profile of the authenticated user.
-        Includes theme preference.
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      responses:
-        '200':
-          description: User profile
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    $ref: '#/components/schemas/UUID'
-                  name:
-                    type: string
-                  email:
-                    type: string
-                  phone:
-                    type: string
-                    nullable: true
-                  avatar:
-                    type: string
-                    nullable: true
-                  theme:
-                    type: string
-                    enum: [light, dark, system]
-                    nullable: true
-                  status:
-                    type: string
-                  created_at:
-                    $ref: '#/components/schemas/Timestamp'
-                  updated_at:
-                    $ref: '#/components/schemas/Timestamp'
-
-  /rest/v1/rpc/rpc__user_update_profile:
-    post:
-      tags: [Auth]
-      summary: Update user profile
-      description: |
-        Updates name, phone, or avatar of authenticated user.
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                p_name:
-                  type: string
-                  nullable: true
-                p_phone:
-                  type: string
-                  nullable: true
-                p_avatar:
-                  type: string
-                  nullable: true
-      responses:
-        '200':
-          description: Profile updated
-          content:
-            application/json:
-              schema:
-                type: object
-
-  /rest/v1/rpc/rpc__user_update_theme:
-    post:
-      tags: [Auth]
-      summary: Update user theme preference
-      description: |
-        Updates the theme preference (light/dark/system).
-        
-        **Theme values:**
-        - `light` - Force light mode
-        - `dark` - Force dark mode
-        - `system` - Follow OS preference
-        - `null` - No preference set
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [p_theme]
-              properties:
-                p_theme:
-                  type: string
-                  enum: [light, dark, system]
-                  example: "dark"
-      responses:
-        '200':
-          description: Theme updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  theme:
-                    type: string
-
-  # ======================================================
-  # CONVERSATION MEMBERS
-  # ======================================================
-  /rest/v1/rpc/rpc__conversation_member_add:
-    post:
-      tags: [Conversations]
-      summary: Add member to conversation
-      description: |
-        Adds a user to a conversation.
-        Creates: conversation_member, conversation_role (member), conversation_read.
-        
-        **Permissions:** Conversation owner or admin
-        
-        **Note:** User must be a project member first
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [p_conversation_id, p_user_id]
-              properties:
-                p_conversation_id:
-                  $ref: '#/components/schemas/UUID'
-                p_user_id:
-                  $ref: '#/components/schemas/UUID'
-                  description: Must be a project member
-      responses:
-        '200':
-          description: Member added
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  conversation_id:
-                    $ref: '#/components/schemas/UUID'
-                  user_id:
-                    $ref: '#/components/schemas/UUID'
-                  role:
-                    type: string
-                    example: member
-        '400':
-          description: User not a project member or already in conversation
-        '403':
-          description: Permission denied
-
-  /rest/v1/rpc/rpc__conversation_member_remove:
-    post:
-      tags: [Conversations]
-      summary: Remove member from conversation
-      description: |
-        Removes a user from a conversation.
-        Deletes: conversation_reads, conversation_roles, conversation_members.
-        
-        **Permissions:** 
-        - Conversation owner (can remove anyone)
-        - Self-remove (any member can leave)
-        
-        **Protection:** Cannot remove owner (unless self-remove)
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [p_conversation_id, p_user_id]
-              properties:
-                p_conversation_id:
-                  $ref: '#/components/schemas/UUID'
-                p_user_id:
-                  $ref: '#/components/schemas/UUID'
-      responses:
-        '204':
-          description: Member removed
-        '403':
-          description: Permission denied
-        '404':
-          description: User not a conversation member
-
-  # ======================================================
-  # NOTIFICATIONS
-  # ======================================================
-  /rest/v1/rpc/rpc__notification_list_for_user:
-    post:
-      tags: [Notifications]
-      summary: List notifications for user
-      description: |
-        Returns notifications for authenticated user.
-        
-        **Returns:**
-        - `unread`: up to 50 unread notifications
-        - `all`: up to 100 total notifications (newest first)
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      responses:
-        '200':
-          description: Notifications
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  unread:
-                    type: array
-                    items:
-                      type: object
-                  all:
-                    type: array
-                    items:
-                      type: object
-
-  /rest/v1/rpc/rpc__notification_mark_read:
-    post:
-      tags: [Notifications]
-      summary: Mark notification as read
-      description: |
-        Marks a single notification as read.
-        
-        **Permissions:** Notification must belong to authenticated user
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [p_notification_id]
-              properties:
-                p_notification_id:
-                  $ref: '#/components/schemas/UUID'
-      responses:
-        '204':
-          description: Notification marked as read
-        '404':
-          description: Notification not found or doesn't belong to user
-
-  /rest/v1/rpc/rpc__notification_mark_all_read:
-    post:
-      tags: [Notifications]
-      summary: Mark all notifications as read
-      description: |
-        Marks all unread notifications of authenticated user as read.
-      security:
-        - ApiKeyAuth: []
-        - BearerAuth: []
-      responses:
-        '204':
-          description: All notifications marked as read
